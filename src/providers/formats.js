@@ -1,14 +1,23 @@
 /**
- * Shared yt-dlp format preference: keep sources small so compression is fast.
- * Prefer <=720p / smaller streams; still fall back if provider lacks them.
+ * Shared yt-dlp format preference.
+ * Prefer <=720p H.264/MP4 so download+encode stay fast and look decent.
  */
-const FAST_FORMAT =
-  [
-    'bv*[height<=720][filesize_approx<=12M]+ba/b[height<=720][filesize_approx<=12M]',
-    'bv*[height<=720]+ba/b[height<=720]',
-    'bv*[height<=480]+ba/b[height<=480]',
-    'wv*+ba/w',
-    'best',
-  ].join('/');
+const FAST_FORMAT = [
+  'bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][ext=mp4]',
+  'bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]',
+  'bv*[height<=720]+ba/b[height<=720]',
+  'bv*[height<=480]+ba/b[height<=480]',
+  'best[height<=720]/best',
+].join('/');
 
-module.exports = { FAST_FORMAT };
+/** YouTube-specific: avoid 1080p60/AV1 monsters that stall compression */
+const YOUTUBE_FORMAT = [
+  'bv*[height<=720][fps<=30][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][ext=mp4]',
+  'bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][ext=mp4]',
+  'bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]',
+  'bv*[height<=720]+ba/b[height<=720]',
+  'bv*[height<=480]+ba/b[height<=480]',
+  'best[height<=720]/best',
+].join('/');
+
+module.exports = { FAST_FORMAT, YOUTUBE_FORMAT };

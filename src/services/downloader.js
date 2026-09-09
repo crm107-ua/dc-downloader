@@ -34,7 +34,26 @@ function providerExtraArgs(provider) {
   return Array.isArray(args) ? args : [];
 }
 
-function providerFormatSelector(provider) {
+function providerFormatSelector(provider, durationSeconds = null) {
+  const dur = Number(durationSeconds);
+  // Long clips: download smaller sources so compress stays fast
+  if (Number.isFinite(dur) && dur > 0) {
+    if (dur > 300) {
+      return [
+        'bv*[height<=360][vcodec^=avc1]+ba[ext=m4a]/b[height<=360][ext=mp4]',
+        'bv*[height<=360]+ba/b[height<=360]',
+        'best[height<=360]/best',
+      ].join('/');
+    }
+    if (dur > 150) {
+      return [
+        'bv*[height<=480][vcodec^=avc1]+ba[ext=m4a]/b[height<=480][ext=mp4]',
+        'bv*[height<=480]+ba/b[height<=480]',
+        'bv*[height<=720]+ba/b[height<=720]',
+        'best[height<=480]/best',
+      ].join('/');
+    }
+  }
   if (provider && typeof provider.formatSelector === 'function') {
     return provider.formatSelector();
   }
@@ -42,15 +61,69 @@ function providerFormatSelector(provider) {
   return FAST_FORMAT;
 }
 
+function normalizeUrl(url, provider) {
+  if (provider && typeof provider.normalizeUrl === 'function') {
+    return provider.normalizeUrl(url);
+  }
+  return url;
+}
+
 function parseYtDlpPercent(text) {
-  // [download]  45.2% of ...  OR  [download] 100% of ...
   const match = /\[download\]\s+(\d{1,3}(?:\.\d+)?)%/.exec(text);
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isFinite(value) ? Math.min(100, value) : null;
 }
 
+function parseDumpJson(stdout) {
+  const text = String(stdout || '').trim();
+  if (!text) throw new Error('yt-dlp no devolvió metadatos.');
+
+  // Prefer a full JSON object even if warnings polluted stdout
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    const candidate = text.slice(start, end + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // fall through to line-based parse
+    }
+  }
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith('{') && l.endsWith('}'));
+  if (!lines.length) {
+    throw new Error('No se pudo parsear metadatos de yt-dlp (JSON inválido).');
+  }
+  return JSON.parse(lines[lines.length - 1]);
+}
+
 async function fetchMetadata(url, config, provider) {
+  // Light metadata first — avoids multi‑MB dump-json parse issues on YouTube
+  const printArgs = [
+    '--no-playlist',
+    '--no-warnings',
+    '--skip-download',
+    '--print',
+    '%(.{id,title,duration,webpage_url})j',
+    ...providerExtraArgs(provider),
+    ...cookiesArgs(config),
+    url,
+  ];
+
+  try {
+    const { stdout } = await run('yt-dlp', printArgs, { timeoutMs: 90000 });
+    const meta = parseDumpJson(stdout);
+    if (meta && (meta.id || meta.title || meta.duration != null)) {
+      return meta;
+    }
+  } catch {
+    // Fallback below
+  }
+
   const args = [
     '--dump-json',
     '--no-playlist',
@@ -59,13 +132,8 @@ async function fetchMetadata(url, config, provider) {
     ...cookiesArgs(config),
     url,
   ];
-  const { stdout } = await run('yt-dlp', args);
-  const lines = stdout
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const jsonLine = lines[lines.length - 1];
-  return JSON.parse(jsonLine);
+  const { stdout } = await run('yt-dlp', args, { timeoutMs: 120000 });
+  return parseDumpJson(stdout);
 }
 
 function assertDuration(meta, maxDurationSeconds) {
@@ -82,15 +150,17 @@ function assertDuration(meta, maxDurationSeconds) {
   return duration;
 }
 
-async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent) {
+async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent, durationSeconds = null) {
   const args = [
     '--no-playlist',
     '--no-warnings',
     '--newline',
     '--progress',
+    '--no-write-subs',
+    '--no-write-auto-subs',
     ...providerExtraArgs(provider),
     '-f',
-    providerFormatSelector(provider),
+    providerFormatSelector(provider, durationSeconds),
     '-o',
     outTemplate,
     '--merge-output-format',
@@ -101,6 +171,8 @@ async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent
 
   let buffer = '';
   await run('yt-dlp', args, {
+    timeoutMs: 300000,
+    rollingBuffer: true,
     onStderr: (text) => {
       buffer += text;
       const parts = buffer.split(/\r?\n/);
@@ -138,6 +210,7 @@ async function downloadAndPrepare(url, options = {}) {
     throw new Error('Plataforma no soportada.');
   }
   const platform = provider.id;
+  const resolvedUrl = normalizeUrl(url, provider);
   const tempRoot = ensureTempDir(config.tempDir);
 
   scheduleTempCleanup();
@@ -157,7 +230,8 @@ async function downloadAndPrepare(url, options = {}) {
   try {
     await onProgress(2, 'metadata');
     console.log(`[${platform}] checking duration before download (max ${config.maxDurationSeconds}s)...`);
-    const meta = await fetchMetadata(url, config, provider);
+    console.log(`[${platform}] url=${resolvedUrl}`);
+    const meta = await fetchMetadata(resolvedUrl, config, provider);
     const preDuration = assertDuration(meta, config.maxDurationSeconds);
     if (preDuration != null) {
       console.log(`[${platform}] duration OK pre-download: ${preDuration}s`);
@@ -169,9 +243,9 @@ async function downloadAndPrepare(url, options = {}) {
     const outTemplate = path.join(jobDir, `${jobId}.%(ext)s`);
     console.log(`[${platform}] downloading...`);
     await onProgress(8, 'download');
-    await downloadRaw(url, provider, outTemplate, config, (dlPct) => {
+    await downloadRaw(resolvedUrl, provider, outTemplate, config, (dlPct) => {
       onProgress(mapRange(dlPct, 8, 72), 'download');
-    });
+    }, preDuration);
     await onProgress(72, 'download');
 
     const rawPath = findDownloadedFile(jobDir, jobId);
@@ -218,4 +292,6 @@ module.exports = {
   downloadAndPrepare,
   fetchMetadata,
   providerFormatSelector,
+  parseDumpJson,
+  normalizeUrl,
 };

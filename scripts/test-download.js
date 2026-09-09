@@ -16,7 +16,11 @@ const FIXTURES = [
   },
   {
     name: 'youtube',
-    url: 'https://www.youtube.com/watch?v=AiQAyz2n9LY',
+    url: 'https://www.youtube.com/watch?v=AjSKT5ovuIs',
+  },
+  {
+    name: 'youtube-shortlink',
+    url: 'https://youtu.be/AjSKT5ovuIs?is=Hk7moJ7RK_9P2P7l',
   },
   {
     name: 'tiktok',
