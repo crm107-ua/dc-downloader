@@ -150,11 +150,13 @@ function parseFfmpegProgress(chunk, durationSeconds) {
 
 /** Choose output resolution from available video bitrate for best perceived quality */
 function pickScaleForBitrate(videoBitrateKbps) {
-  if (videoBitrateKbps >= 1800) return '1920:1080';
-  if (videoBitrateKbps >= 900) return '1280:720';
-  if (videoBitrateKbps >= 450) return '854:480';
-  if (videoBitrateKbps >= 250) return '640:360';
-  return '480:270';
+  // Prefer fewer pixels when bitrate is tight — sharper than mushy higher res
+  if (videoBitrateKbps >= 2200) return '1920:1080';
+  if (videoBitrateKbps >= 1100) return '1280:720';
+  if (videoBitrateKbps >= 550) return '854:480';
+  if (videoBitrateKbps >= 280) return '640:360';
+  if (videoBitrateKbps >= 160) return '512:288';
+  return '426:240';
 }
 
 function makeProgressHandler(duration, onProgress, passIndex, passCount) {
@@ -213,40 +215,41 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
     };
   }
 
-  // Leave headroom under Discord cap
-  const targetBytes = Math.floor(maxBytes * 0.94);
+  // Use almost the full Discord cap; leave a tiny safety margin
+  const targetBytes = Math.floor(maxBytes * 0.985);
   const totalBitrateKbps = Math.max(160, Math.floor((targetBytes * 8) / duration / 1000));
 
-  // Keep enough audio for clarity; rest goes to video
-  const audioBitrateKbps = totalBitrateKbps >= 400 ? 128 : totalBitrateKbps >= 250 ? 96 : 64;
-  const videoBitrateKbps = Math.max(100, totalBitrateKbps - audioBitrateKbps);
+  // Starve audio a bit on long clips so video gets more bits (clarity > stereo richness)
+  const audioBitrateKbps =
+    totalBitrateKbps >= 500 ? 128 : totalBitrateKbps >= 320 ? 96 : totalBitrateKbps >= 220 ? 64 : 48;
+  const videoBitrateKbps = Math.max(110, totalBitrateKbps - audioBitrateKbps);
   const scale = pickScaleForBitrate(videoBitrateKbps);
 
-  // Quality ladder: medium 2-pass first, then smaller scale if still oversize
+  // Quality ladder: slow 2-pass first (best look), then slightly tighter if oversize
   const attempts = [
-    { videoBitrateKbps, scale, preset: 'medium', twoPass: true },
+    { videoBitrateKbps, scale, preset: 'slow', twoPass: true },
     {
-      videoBitrateKbps: Math.max(90, Math.floor(videoBitrateKbps * 0.85)),
-      scale: pickScaleForBitrate(videoBitrateKbps * 0.75),
-      preset: 'medium',
+      videoBitrateKbps: Math.max(100, Math.floor(videoBitrateKbps * 0.9)),
+      scale: pickScaleForBitrate(videoBitrateKbps * 0.85),
+      preset: 'slow',
       twoPass: true,
     },
     {
-      videoBitrateKbps: Math.max(80, Math.floor(videoBitrateKbps * 0.7)),
-      scale: pickScaleForBitrate(videoBitrateKbps * 0.55),
-      preset: 'slow',
+      videoBitrateKbps: Math.max(90, Math.floor(videoBitrateKbps * 0.75)),
+      scale: pickScaleForBitrate(videoBitrateKbps * 0.6),
+      preset: 'medium',
       twoPass: false,
     },
   ];
 
   const passLogBase = path.join(os.tmpdir(), `dc-dlp-${process.pid}-${Date.now()}`);
   let lastError = null;
-  // Allow longer encodes; heartbeat keeps Discord UI alive
-  const attemptTimeoutMs = Math.min(12 * 60 * 1000, Math.max(90 * 1000, Math.ceil(duration * 1500)));
+  // Long encodes OK; Discord heartbeat keeps the % UI alive (interaction ~15 min)
+  const attemptTimeoutMs = Math.min(13 * 60 * 1000, Math.max(120 * 1000, Math.ceil(duration * 2000)));
 
   for (let i = 0; i < attempts.length; i += 1) {
     const attempt = attempts[i];
-    const vf = `scale=${attempt.scale}:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p`;
+    const vf = `scale=${attempt.scale}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,format=yuv420p`;
     const commonVideo = [
       '-vf',
       vf,
@@ -261,11 +264,17 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
       '-b:v',
       `${attempt.videoBitrateKbps}k`,
       '-maxrate',
-      `${Math.floor(attempt.videoBitrateKbps * 1.15)}k`,
+      `${Math.floor(attempt.videoBitrateKbps * 1.2)}k`,
       '-bufsize',
-      `${attempt.videoBitrateKbps * 2}k`,
+      `${attempt.videoBitrateKbps * 3}k`,
+      '-g',
+      '60',
+      '-keyint_min',
+      '30',
+      '-sc_threshold',
+      '40',
       '-x264-params',
-      'aq-mode=3:aq-strength=0.9:ref=3:me=umh:subme=7',
+      'aq-mode=3:aq-strength=1.0:psy-rd=1.0:0.15:deblock=-1,-1:ref=4:me=umh:subme=9:trellis=2:bframes=3',
     ];
 
     try {
@@ -286,6 +295,9 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
             '-passlogfile',
             passlog,
             '-an',
+            '-progress',
+            'pipe:1',
+            '-nostats',
             '-f',
             'null',
             process.platform === 'win32' ? 'NUL' : '/dev/null',
@@ -293,7 +305,7 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
           {
             timeoutMs: attemptTimeoutMs,
             rollingBuffer: true,
-            onStderr: makeProgressHandler(duration, onProgress, i * 2, attempts.length * 2),
+            onStdout: makeProgressHandler(duration, onProgress, i * 2, attempts.length * 2),
           }
         );
 
