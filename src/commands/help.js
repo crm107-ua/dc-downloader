@@ -23,8 +23,22 @@ async function execute(interaction) {
       {
         name: 'Comandos',
         value: [
-          '`/video url:<enlace>` — descarga y envía el video',
+          '`/video url:<enlace> [calidad]` — descarga y envía el video',
           '`/help` — muestra esta ayuda',
+        ].join('\n'),
+      },
+      {
+        name: 'Cola',
+        value:
+          'Puedes usar `/video` en varios canales a la vez. Solo se procesa **uno** cada vez; el resto espera en cola con su posición visible.',
+      },
+      {
+        name: 'Calidad (solo YouTube)',
+        value: [
+          '`auto` — equilibrado (por defecto)',
+          '`alta` — máxima calidad, más lento',
+          '`rapida` — menos calidad, más rápido',
+          'X / Reddit / TikTok siempre usan calidad alta.',
         ].join('\n'),
       },
       {
@@ -34,16 +48,18 @@ async function execute(interaction) {
       {
         name: 'Límites',
         value: [
-          `Duración máxima **antes** de descargar: **${maxMin} min** (\`MAX_DURATION_SECONDS=${config.maxDurationSeconds}\`)`,
-          `Tamaño máximo del archivo enviado: **${maxMb} MB** (\`MAX_FILE_SIZE_MB=${maxMb}\`)`,
+          `Duración máxima **antes** de descargar: **${maxMin} min**`,
+          `Tamaño máximo del archivo enviado: **${maxMb} MB**`,
         ].join('\n'),
       },
       {
         name: 'Ejemplo',
-        value: '`/video url:https://www.youtube.com/watch?v=...`',
+        value: '`/video url:https://www.youtube.com/watch?v=... calidad:alta`',
       }
     )
-    .setFooter({ text: 'Si Reddit/X fallan por login, configura COOKIES_FILE o COOKIES_FROM_BROWSER en .env' });
+    .setFooter({
+      text: 'Si Reddit/X fallan por login, configura COOKIES_FILE o COOKIES_FROM_BROWSER en .env',
+    });
 
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }

@@ -191,7 +191,7 @@ function findDownloadedFile(jobDir, jobId) {
 
 /**
  * @param {string} url
- * @param {{ onProgress?: (percent: number, stage: string) => void | Promise<void> }} [options]
+ * @param {{ onProgress?: (percent: number, stage: string) => void | Promise<void>, qualityMode?: string }} [options]
  */
 async function downloadAndPrepare(url, options = {}) {
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : async () => {};
@@ -201,6 +201,9 @@ async function downloadAndPrepare(url, options = {}) {
     throw new Error('Plataforma no soportada.');
   }
   const platform = provider.id;
+  // YouTube: user-selectable. Other providers keep current high-quality encode.
+  const qualityMode =
+    platform === 'youtube' ? options.qualityMode || 'auto' : 'alta';
   const resolvedUrl = normalizeUrl(url, provider);
   const tempRoot = ensureTempDir(config.tempDir);
 
@@ -222,6 +225,7 @@ async function downloadAndPrepare(url, options = {}) {
     await onProgress(2, 'metadata');
     console.log(`[${platform}] checking duration before download (max ${config.maxDurationSeconds}s)...`);
     console.log(`[${platform}] url=${resolvedUrl}`);
+    console.log(`[${platform}] qualityMode=${qualityMode}`);
     const meta = await fetchMetadata(resolvedUrl, config, provider);
     const preDuration = assertDuration(meta, config.maxDurationSeconds);
     if (preDuration != null) {
@@ -256,7 +260,8 @@ async function downloadAndPrepare(url, options = {}) {
       config.maxFileSizeBytes,
       (ratio) => {
         onProgress(mapRange(ratio, 72, 95), 'compress');
-      }
+      },
+      { qualityMode }
     );
     await onProgress(95, 'compress');
 
@@ -268,6 +273,7 @@ async function downloadAndPrepare(url, options = {}) {
       title: meta.title || meta.id || 'video',
       platform,
       providerLabel: provider.label,
+      qualityMode,
       sizeBytes: compressed.sizeBytes,
       durationSeconds: compressed.durationSeconds,
       hadWatermarkOnly: Boolean(analysis.hadWatermarkOnly),

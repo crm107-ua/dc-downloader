@@ -2,7 +2,9 @@ const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
 const { parseAllowedUrl } = require('../config');
 const { resolveProviderByUrl } = require('../providers');
 const { downloadAndPrepare } = require('../services/downloader');
+const { enqueue } = require('../services/jobQueue');
 const { createProgressReporter } = require('../utils/progress');
+const { normalizeQualityMode } = require('../services/compressor');
 
 const data = new SlashCommandBuilder()
   .setName('video')
@@ -12,10 +14,22 @@ const data = new SlashCommandBuilder()
       .setName('url')
       .setDescription('Enlace del video')
       .setRequired(true)
+  )
+  .addStringOption((option) =>
+    option
+      .setName('calidad')
+      .setDescription('YouTube: rapida / auto / alta (otros proveedores usan calidad alta)')
+      .setRequired(false)
+      .addChoices(
+        { name: 'Auto (recomendado)', value: 'auto' },
+        { name: 'Alta (más lento, mejor imagen)', value: 'alta' },
+        { name: 'Rápida (menos calidad)', value: 'rapida' }
+      )
   );
 
 async function execute(interaction) {
   const rawUrl = interaction.options.getString('url', true);
+  const calidadOpt = interaction.options.getString('calidad');
 
   let url;
   try {
@@ -26,18 +40,39 @@ async function execute(interaction) {
   }
 
   const provider = resolveProviderByUrl(url);
+  const qualityMode =
+    provider && provider.id === 'youtube'
+      ? normalizeQualityMode(calidadOpt || 'auto')
+      : 'alta';
+
   await interaction.deferReply();
 
   const progress = createProgressReporter(interaction, {
     providerLabel: provider ? provider.label : '',
+    qualityMode: provider && provider.id === 'youtube' ? qualityMode : null,
+    isYouTube: Boolean(provider && provider.id === 'youtube'),
   });
-  await progress.force(1, 'metadata');
 
   let result;
   try {
-    result = await downloadAndPrepare(url, {
-      onProgress: (percent, stage) => progress.update(percent, stage),
-    });
+    result = await enqueue(
+      async () =>
+        downloadAndPrepare(url, {
+          qualityMode,
+          onProgress: (percent, stage) => progress.update(percent, stage),
+        }),
+      {
+        onQueued: (info) => {
+          // Only show queue UI if someone is ahead
+          if (info.position > 0) {
+            progress.setQueued(info).catch(() => {});
+          }
+        },
+        onStart: () => {
+          progress.force(1, 'metadata').catch(() => {});
+        },
+      }
+    );
   } catch (err) {
     progress.close();
     let message = err && err.message ? err.message : 'Error desconocido al descargar.';

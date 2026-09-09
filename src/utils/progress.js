@@ -4,6 +4,12 @@ const BAR_WIDTH = 16;
 const FILLED = '█';
 const EMPTY = '░';
 
+const QUALITY_LABELS = {
+  rapida: 'Rápida',
+  auto: 'Auto',
+  alta: 'Alta',
+};
+
 function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
 }
@@ -22,23 +28,34 @@ function formatElapsed(ms) {
   return `${m}:${String(r).padStart(2, '0')}`;
 }
 
-const STAGE_LABELS = {
-  metadata: 'Analizando enlace',
-  download: 'Descargando',
-  compress: 'Comprimiendo (calidad alta)',
-  upload: 'Enviando a Discord',
-  done: 'Listo',
-};
+function compressLabel(qualityMode) {
+  if (qualityMode === 'rapida') return 'Comprimiendo (rápida)';
+  if (qualityMode === 'auto') return 'Comprimiendo (auto)';
+  return 'Comprimiendo (calidad alta)';
+}
+
+function stageLabel(stage, qualityMode) {
+  if (stage === 'queued') return 'En cola';
+  if (stage === 'compress') return compressLabel(qualityMode);
+  const map = {
+    metadata: 'Analizando enlace',
+    download: 'Descargando',
+    upload: 'Enviando a Discord',
+    done: 'Listo',
+  };
+  return map[stage] || stage;
+}
 
 /**
  * Throttled Discord progress UI with heartbeat so the bar never looks frozen.
  */
-function createProgressReporter(interaction, { providerLabel }) {
+function createProgressReporter(interaction, { providerLabel, qualityMode, isYouTube } = {}) {
   let lastSentAt = 0;
   let lastPercent = -1;
   let lastStage = '';
   let currentPercent = 0;
   let currentStage = 'metadata';
+  let queueInfo = null;
   let pending = null;
   let closed = false;
   let chain = Promise.resolve();
@@ -47,21 +64,25 @@ function createProgressReporter(interaction, { providerLabel }) {
   let heartbeat = null;
 
   function buildPayload(percent, stage) {
-    const label = STAGE_LABELS[stage] || stage;
-    const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setTitle('Procesando video')
-      .setDescription(
-        [
-          renderBar(percent),
-          '',
-          `**${label}**`,
-          providerLabel ? `Proveedor · ${providerLabel}` : null,
-          `Tiempo · ${formatElapsed(Date.now() - startedAt)}`,
-        ]
-          .filter(Boolean)
-          .join('\n')
+    const lines = [renderBar(percent), '', `**${stageLabel(stage, qualityMode)}**`];
+
+    if (stage === 'queued' && queueInfo && queueInfo.position > 0) {
+      lines.push(
+        `Posición · **${queueInfo.position}** en espera`,
+        'Se procesará cuando termine el video anterior'
       );
+    }
+
+    if (providerLabel) lines.push(`Proveedor · ${providerLabel}`);
+    if (isYouTube && qualityMode) {
+      lines.push(`Calidad · ${QUALITY_LABELS[qualityMode] || qualityMode}`);
+    }
+    lines.push(`Tiempo · ${formatElapsed(Date.now() - startedAt)}`);
+
+    const embed = new EmbedBuilder()
+      .setColor(stage === 'queued' ? 0xfaa61a : 0x5865f2)
+      .setTitle(stage === 'queued' ? 'En cola' : 'Procesando video')
+      .setDescription(lines.join('\n'));
     return { content: null, embeds: [embed] };
   }
 
@@ -93,7 +114,6 @@ function createProgressReporter(interaction, { providerLabel }) {
 
   heartbeat = setInterval(() => {
     if (closed) return;
-    // Force a UI refresh so Discord never looks stuck during long encodes
     flush(currentPercent, currentStage, true).catch(() => {});
   }, 4000);
 
@@ -108,6 +128,12 @@ function createProgressReporter(interaction, { providerLabel }) {
       currentPercent = clamp(percent, 0, 100);
       currentStage = stage;
       await flush(currentPercent, stage, true);
+    },
+    async setQueued(info) {
+      queueInfo = info;
+      currentStage = 'queued';
+      currentPercent = 0;
+      await flush(0, 'queued', true);
     },
     async flushPending() {
       if (pending) {
@@ -134,5 +160,5 @@ module.exports = {
   renderBar,
   createProgressReporter,
   mapRange,
-  STAGE_LABELS,
+  QUALITY_LABELS,
 };

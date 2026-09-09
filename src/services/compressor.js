@@ -179,11 +179,92 @@ function makeProgressHandler(duration, onProgress, passIndex, passCount) {
   };
 }
 
+const QUALITY_MODES = new Set(['rapida', 'auto', 'alta']);
+
+function normalizeQualityMode(mode) {
+  const m = String(mode || 'alta').toLowerCase();
+  if (QUALITY_MODES.has(m)) return m;
+  return 'alta';
+}
+
+function buildEncodeAttempts(videoBitrateKbps, qualityMode) {
+  const scale = pickScaleForBitrate(videoBitrateKbps);
+  if (qualityMode === 'rapida') {
+    return [
+      { videoBitrateKbps, scale, preset: 'veryfast', twoPass: false, x264: 'aq-mode=3:ref=2:me=hex:subme=4' },
+      {
+        videoBitrateKbps: Math.max(90, Math.floor(videoBitrateKbps * 0.85)),
+        scale: pickScaleForBitrate(videoBitrateKbps * 0.75),
+        preset: 'veryfast',
+        twoPass: false,
+        x264: 'aq-mode=3:ref=2:me=hex:subme=4',
+      },
+      {
+        videoBitrateKbps: Math.max(80, Math.floor(videoBitrateKbps * 0.7)),
+        scale: pickScaleForBitrate(videoBitrateKbps * 0.55),
+        preset: 'faster',
+        twoPass: false,
+        x264: 'aq-mode=3:ref=2:me=hex:subme=5',
+      },
+    ];
+  }
+  if (qualityMode === 'auto') {
+    return [
+      {
+        videoBitrateKbps,
+        scale,
+        preset: 'medium',
+        twoPass: true,
+        x264: 'aq-mode=3:aq-strength=0.9:ref=3:me=umh:subme=7:trellis=1:bframes=3',
+      },
+      {
+        videoBitrateKbps: Math.max(100, Math.floor(videoBitrateKbps * 0.88)),
+        scale: pickScaleForBitrate(videoBitrateKbps * 0.8),
+        preset: 'medium',
+        twoPass: true,
+        x264: 'aq-mode=3:aq-strength=0.9:ref=3:me=umh:subme=7',
+      },
+      {
+        videoBitrateKbps: Math.max(90, Math.floor(videoBitrateKbps * 0.72)),
+        scale: pickScaleForBitrate(videoBitrateKbps * 0.6),
+        preset: 'fast',
+        twoPass: false,
+        x264: 'aq-mode=3:ref=3:me=hex:subme=6',
+      },
+    ];
+  }
+  // alta — current max-quality path
+  return [
+    {
+      videoBitrateKbps,
+      scale,
+      preset: 'slow',
+      twoPass: true,
+      x264: 'aq-mode=3:aq-strength=1.0:psy-rd=1.0:0.15:deblock=-1,-1:ref=4:me=umh:subme=9:trellis=2:bframes=3',
+    },
+    {
+      videoBitrateKbps: Math.max(100, Math.floor(videoBitrateKbps * 0.9)),
+      scale: pickScaleForBitrate(videoBitrateKbps * 0.85),
+      preset: 'slow',
+      twoPass: true,
+      x264: 'aq-mode=3:aq-strength=1.0:psy-rd=1.0:0.15:deblock=-1,-1:ref=4:me=umh:subme=9:trellis=2:bframes=3',
+    },
+    {
+      videoBitrateKbps: Math.max(90, Math.floor(videoBitrateKbps * 0.75)),
+      scale: pickScaleForBitrate(videoBitrateKbps * 0.6),
+      preset: 'medium',
+      twoPass: false,
+      x264: 'aq-mode=3:aq-strength=1.0:ref=3:me=umh:subme=7',
+    },
+  ];
+}
+
 /**
- * Quality-first compression under maxBytes.
- * Uses 2-pass x264 when needed; prefers readable resolution for the target bitrate.
+ * Compress under maxBytes.
+ * qualityMode: rapida | auto | alta (default alta for non-YouTube callers).
  */
-async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
+async function compressToLimit(inputPath, outputPath, maxBytes, onProgress, options = {}) {
+  const qualityMode = normalizeQualityMode(options.qualityMode);
   const duration = await probeDuration(inputPath);
   const inputSize = fs.statSync(inputPath).size;
 
@@ -223,33 +304,20 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
   const audioBitrateKbps =
     totalBitrateKbps >= 500 ? 128 : totalBitrateKbps >= 320 ? 96 : totalBitrateKbps >= 220 ? 64 : 48;
   const videoBitrateKbps = Math.max(110, totalBitrateKbps - audioBitrateKbps);
-  const scale = pickScaleForBitrate(videoBitrateKbps);
-
-  // Quality ladder: slow 2-pass first (best look), then slightly tighter if oversize
-  const attempts = [
-    { videoBitrateKbps, scale, preset: 'slow', twoPass: true },
-    {
-      videoBitrateKbps: Math.max(100, Math.floor(videoBitrateKbps * 0.9)),
-      scale: pickScaleForBitrate(videoBitrateKbps * 0.85),
-      preset: 'slow',
-      twoPass: true,
-    },
-    {
-      videoBitrateKbps: Math.max(90, Math.floor(videoBitrateKbps * 0.75)),
-      scale: pickScaleForBitrate(videoBitrateKbps * 0.6),
-      preset: 'medium',
-      twoPass: false,
-    },
-  ];
+  const attempts = buildEncodeAttempts(videoBitrateKbps, qualityMode);
 
   const passLogBase = path.join(os.tmpdir(), `dc-dlp-${process.pid}-${Date.now()}`);
   let lastError = null;
-  // Long encodes OK; Discord heartbeat keeps the % UI alive (interaction ~15 min)
-  const attemptTimeoutMs = Math.min(13 * 60 * 1000, Math.max(120 * 1000, Math.ceil(duration * 2000)));
+  const timeoutFactor = qualityMode === 'rapida' ? 900 : qualityMode === 'auto' ? 1400 : 2000;
+  const attemptTimeoutMs = Math.min(
+    13 * 60 * 1000,
+    Math.max(90 * 1000, Math.ceil(duration * timeoutFactor))
+  );
 
   for (let i = 0; i < attempts.length; i += 1) {
     const attempt = attempts[i];
-    const vf = `scale=${attempt.scale}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,format=yuv420p`;
+    const scaleFlags = qualityMode === 'rapida' ? 'bilinear' : 'lanczos';
+    const vf = `scale=${attempt.scale}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=${scaleFlags},format=yuv420p`;
     const commonVideo = [
       '-vf',
       vf,
@@ -274,7 +342,7 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
       '-sc_threshold',
       '40',
       '-x264-params',
-      'aq-mode=3:aq-strength=1.0:psy-rd=1.0:0.15:deblock=-1,-1:ref=4:me=umh:subme=9:trellis=2:bframes=3',
+      attempt.x264,
     ];
 
     try {
@@ -425,4 +493,6 @@ module.exports = {
   probeDuration,
   run,
   parseFfmpegProgress,
+  normalizeQualityMode,
+  QUALITY_MODES,
 };
