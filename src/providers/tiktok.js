@@ -11,10 +11,13 @@ const provider = {
     'm.tiktok.com',
   ],
   formatSelector() {
-    // Prefer play_addr / direct streams; skip notes labeled watermarked
+    // Prefer no-watermark play_addr; still avoid oversized sources when possible
     return [
+      'best[format_id^=play_addr][height<=720]',
+      'best[format_id*=play_addr][height<=720]',
       'best[format_id^=play_addr]',
       'best[format_id*=play_addr]',
+      'best[format_note!*=watermarked][height<=720]',
       'best[format_note!*=watermarked]',
       'best[format_note!*=watermark]',
       'best',

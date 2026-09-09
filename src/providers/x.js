@@ -1,12 +1,12 @@
 const { matchesHost } = require('./contract');
+const { FAST_FORMAT } = require('./formats');
 
-/** @type {import('./contract')} */
 const provider = {
   id: 'x',
   label: 'X / Twitter',
   hosts: ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'],
   formatSelector() {
-    return 'bv*+ba/b';
+    return FAST_FORMAT;
   },
   extraArgs() {
     return [];

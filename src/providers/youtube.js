@@ -1,14 +1,14 @@
 const { matchesHost } = require('./contract');
+const { FAST_FORMAT } = require('./formats');
 
 const provider = {
   id: 'youtube',
   label: 'YouTube',
   hosts: ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'],
   formatSelector() {
-    return 'bv*+ba/b';
+    return FAST_FORMAT;
   },
   extraArgs() {
-    // Avoid HTTP 403 from web client on some regions/versions
     return ['--extractor-args', 'youtube:player_client=android,ios,web'];
   },
 };

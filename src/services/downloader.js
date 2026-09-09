@@ -38,7 +38,8 @@ function providerFormatSelector(provider) {
   if (provider && typeof provider.formatSelector === 'function') {
     return provider.formatSelector();
   }
-  return 'bv*+ba/b';
+  const { FAST_FORMAT } = require('../providers/formats');
+  return FAST_FORMAT;
 }
 
 function parseYtDlpPercent(text) {

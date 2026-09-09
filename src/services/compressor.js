@@ -1,7 +1,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 
-const DEFAULT_TIMEOUT_MS = 4 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 90 * 1000;
 
 function run(command, args, options = {}) {
   const { onStdout, onStderr, timeoutMs = DEFAULT_TIMEOUT_MS, ...spawnOptions } = options;
@@ -40,7 +40,6 @@ function run(command, args, options = {}) {
     if (child.stdout) {
       child.stdout.on('data', (chunk) => {
         const text = chunk.toString();
-        // Keep a rolling buffer only (avoid unbounded growth on long encodes)
         stdout = (stdout + text).slice(-50000);
         if (typeof onStdout === 'function') onStdout(text);
       });
@@ -83,7 +82,7 @@ async function probeDuration(filePath) {
       'default=noprint_wrappers=1:nokey=1',
       filePath,
     ],
-    { timeoutMs: 30000 }
+    { timeoutMs: 20000 }
   );
   const duration = Number(stdout.trim());
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -93,7 +92,6 @@ async function probeDuration(filePath) {
 }
 
 function parseTimestampToSeconds(value) {
-  // 00:01:23.456789 or 123.45
   if (!value) return null;
   if (/^\d+(\.\d+)?$/.test(value)) {
     const n = Number(value);
@@ -110,7 +108,6 @@ function parseTimestampToSeconds(value) {
 
 function parseFfmpegProgress(chunk, durationSeconds) {
   if (!durationSeconds || durationSeconds <= 0) return null;
-
   if (/progress=end/.test(chunk)) return 100;
 
   const us = /out_time_us=(\d+)/.exec(chunk);
@@ -121,10 +118,8 @@ function parseFfmpegProgress(chunk, durationSeconds) {
 
   const ms = /out_time_ms=(\d+)/.exec(chunk);
   if (ms) {
-    // Some builds report microseconds in out_time_ms; detect by magnitude
-    let raw = Number(ms[1]);
+    const raw = Number(ms[1]);
     if (!Number.isFinite(raw)) return null;
-    // If value looks like microseconds (> duration*2000), treat as us
     const seconds = raw > durationSeconds * 2000 ? raw / 1e6 : raw / 1e3;
     return Math.min(100, (seconds / durationSeconds) * 100);
   }
@@ -138,59 +133,102 @@ function parseFfmpegProgress(chunk, durationSeconds) {
   return null;
 }
 
+function pickScale(durationSeconds) {
+  // Longer clips start smaller so encode stays quick under the 10MB cap
+  if (durationSeconds > 180) return '640:360';
+  if (durationSeconds > 60) return '854:480';
+  return '1280:720';
+}
+
 /**
- * Compress input so output is strictly under maxBytes.
- * Prefers fast presets and early downscale so Discord jobs don't stall.
- * @param {(ratio: number, meta: { attempt: number, attempts: number }) => void} [onProgress]
+ * Fast path to Discord size limit: skip encode when already small,
+ * otherwise ultrafast x264 with early downscale (2 attempts max).
  */
 async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
   const duration = await probeDuration(inputPath);
-  const audioBitrateKbps = 96;
-  const targetBytes = Math.floor(maxBytes * 0.95);
+  const inputSize = fs.statSync(inputPath).size;
+
+  // Already under limit — remux/copy, no heavy encode
+  if (inputSize <= maxBytes) {
+    if (typeof onProgress === 'function') onProgress(20, { attempt: 1, attempts: 1 });
+    try {
+      await run(
+        'ffmpeg',
+        [
+          '-y',
+          '-i',
+          inputPath,
+          '-c',
+          'copy',
+          '-movflags',
+          '+faststart',
+          outputPath,
+        ],
+        { timeoutMs: 45000 }
+      );
+      if (fs.existsSync(outputPath) && fs.statSync(outputPath).size <= maxBytes) {
+        if (typeof onProgress === 'function') onProgress(100, { attempt: 1, attempts: 1 });
+        return {
+          outputPath,
+          sizeBytes: fs.statSync(outputPath).size,
+          durationSeconds: duration,
+        };
+      }
+    } catch {
+      // Fall through to re-encode
+    }
+    fs.copyFileSync(inputPath, outputPath);
+    if (typeof onProgress === 'function') onProgress(100, { attempt: 1, attempts: 1 });
+    return {
+      outputPath,
+      sizeBytes: fs.statSync(outputPath).size,
+      durationSeconds: duration,
+    };
+  }
+
+  const audioBitrateKbps = 64;
+  const targetBytes = Math.floor(maxBytes * 0.92);
   const totalBitrateKbps = Math.max(
-    80,
+    70,
     Math.floor((targetBytes * 8) / duration / 1000)
   );
-  let videoBitrateKbps = Math.max(48, totalBitrateKbps - audioBitrateKbps);
+  const videoBitrateKbps = Math.max(40, totalBitrateKbps - audioBitrateKbps);
+  const primaryScale = pickScale(duration);
 
-  // Start already scaled: high-res sources were hanging Discord on "Comprimiendo"
   const attempts = [
     {
       videoBitrateKbps,
-      scale: '1280:720',
-      preset: 'veryfast',
-    },
-    {
-      videoBitrateKbps: Math.max(48, Math.floor(videoBitrateKbps * 0.65)),
-      scale: '854:480',
-      preset: 'veryfast',
-    },
-    {
-      videoBitrateKbps: Math.max(40, Math.floor(videoBitrateKbps * 0.4)),
-      scale: '640:360',
+      scale: primaryScale,
       preset: 'ultrafast',
     },
     {
-      videoBitrateKbps: Math.max(32, Math.floor(videoBitrateKbps * 0.25)),
-      scale: '480:270',
+      videoBitrateKbps: Math.max(32, Math.floor(videoBitrateKbps * 0.55)),
+      scale: duration > 60 ? '480:270' : '640:360',
       preset: 'ultrafast',
     },
   ];
 
   let lastError = null;
-  // Cap encode time per attempt (Discord interaction ~15 min total)
-  const attemptTimeoutMs = Math.min(180000, Math.max(60000, Math.ceil(duration * 2500)));
+  const attemptTimeoutMs = Math.min(90000, Math.max(25000, Math.ceil(duration * 1200)));
 
   for (let i = 0; i < attempts.length; i += 1) {
     const attempt = attempts[i];
     const args = [
       '-y',
+      '-threads',
+      '0',
       '-i',
       inputPath,
+      '-vf',
+      `scale=${attempt.scale}:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p`,
       '-c:v',
       'libx264',
       '-preset',
       attempt.preset,
+      '-tune',
+      'fastdecode',
+      '-x264-params',
+      'ref=1:bframes=0:rc-lookahead=0:aq-mode=0:me=dia:subme=0:trellis=0:weightp=0',
       '-b:v',
       `${attempt.videoBitrateKbps}k`,
       '-maxrate',
@@ -207,13 +245,9 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
       '44100',
       '-movflags',
       '+faststart',
-      '-pix_fmt',
-      'yuv420p',
       '-progress',
       'pipe:1',
       '-nostats',
-      '-vf',
-      `scale=${attempt.scale}:force_original_aspect_ratio=decrease,format=yuv420p`,
       outputPath,
     ];
 

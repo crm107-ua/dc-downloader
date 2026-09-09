@@ -1,11 +1,12 @@
 const { matchesHost } = require('./contract');
+const { FAST_FORMAT } = require('./formats');
 
 const provider = {
   id: 'reddit',
   label: 'Reddit',
   hosts: ['reddit.com', 'www.reddit.com', 'old.reddit.com'],
   formatSelector() {
-    return 'bv*+ba/b';
+    return FAST_FORMAT;
   },
   extraArgs() {
     return [];
