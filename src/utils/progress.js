@@ -32,7 +32,8 @@ function createProgressReporter(interaction, { providerLabel }) {
   let lastStage = '';
   let pending = null;
   let closed = false;
-  const minIntervalMs = 1200;
+  let chain = Promise.resolve();
+  const minIntervalMs = 1500;
 
   function buildPayload(percent, stage) {
     const label = STAGE_LABELS[stage] || stage;
@@ -56,7 +57,7 @@ function createProgressReporter(interaction, { providerLabel }) {
     if (closed) return;
     const now = Date.now();
     const stageChanged = stage !== lastStage;
-    const jumped = Math.abs(percent - lastPercent) >= 2;
+    const jumped = Math.abs(percent - lastPercent) >= 3;
     if (!force && !stageChanged && !jumped && now - lastSentAt < minIntervalMs) {
       pending = { percent, stage };
       return;
@@ -67,11 +68,14 @@ function createProgressReporter(interaction, { providerLabel }) {
     lastStage = stage;
     pending = null;
 
-    try {
-      await interaction.editReply(buildPayload(percent, stage));
-    } catch {
-      // Ignore edit races / unknown interaction
-    }
+    // Serialize Discord edits to avoid rate-limit pileups that freeze the UI
+    chain = chain
+      .then(async () => {
+        if (closed) return;
+        await interaction.editReply(buildPayload(percent, stage));
+      })
+      .catch(() => {});
+    await chain;
   }
 
   return {
