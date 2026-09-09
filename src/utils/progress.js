@@ -49,7 +49,7 @@ function stageLabel(stage, qualityMode) {
 /**
  * Throttled Discord progress UI with heartbeat so the bar never looks frozen.
  */
-function createProgressReporter(interaction, { providerLabel, qualityMode, isYouTube } = {}) {
+function createProgressReporter(interaction, { providerLabel, qualityMode } = {}) {
   let lastSentAt = 0;
   let lastPercent = -1;
   let lastStage = '';
@@ -74,7 +74,7 @@ function createProgressReporter(interaction, { providerLabel, qualityMode, isYou
     }
 
     if (providerLabel) lines.push(`Proveedor · ${providerLabel}`);
-    if (isYouTube && qualityMode) {
+    if (qualityMode) {
       lines.push(`Calidad · ${QUALITY_LABELS[qualityMode] || qualityMode}`);
     }
     lines.push(`Tiempo · ${formatElapsed(Date.now() - startedAt)}`);

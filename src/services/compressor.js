@@ -182,9 +182,9 @@ function makeProgressHandler(duration, onProgress, passIndex, passCount) {
 const QUALITY_MODES = new Set(['rapida', 'auto', 'alta']);
 
 function normalizeQualityMode(mode) {
-  const m = String(mode || 'alta').toLowerCase();
+  const m = String(mode || 'auto').toLowerCase();
   if (QUALITY_MODES.has(m)) return m;
-  return 'alta';
+  return 'auto';
 }
 
 function buildEncodeAttempts(videoBitrateKbps, qualityMode) {
@@ -261,7 +261,7 @@ function buildEncodeAttempts(videoBitrateKbps, qualityMode) {
 
 /**
  * Compress under maxBytes.
- * qualityMode: rapida | auto | alta (default alta for non-YouTube callers).
+ * qualityMode: rapida | auto | alta (default auto).
  */
 async function compressToLimit(inputPath, outputPath, maxBytes, onProgress, options = {}) {
   const qualityMode = normalizeQualityMode(options.qualityMode);

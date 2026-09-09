@@ -3,7 +3,7 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const { getConfig } = require('../config');
 const { resolveProviderByUrl } = require('../providers');
-const { run, compressToLimit, probeDuration } = require('./compressor');
+const { run, compressToLimit, probeDuration, normalizeQualityMode } = require('./compressor');
 const { scheduleTempCleanup } = require('./tempCleanup');
 const { mapRange } = require('../utils/progress');
 
@@ -201,9 +201,8 @@ async function downloadAndPrepare(url, options = {}) {
     throw new Error('Plataforma no soportada.');
   }
   const platform = provider.id;
-  // YouTube: user-selectable. Other providers keep current high-quality encode.
-  const qualityMode =
-    platform === 'youtube' ? options.qualityMode || 'auto' : 'alta';
+  // Default auto for every provider unless the user picks calidad
+  const qualityMode = normalizeQualityMode(options.qualityMode || 'auto');
   const resolvedUrl = normalizeUrl(url, provider);
   const tempRoot = ensureTempDir(config.tempDir);
 

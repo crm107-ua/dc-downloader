@@ -33,12 +33,12 @@ async function execute(interaction) {
           'Puedes usar `/video` en varios canales a la vez. Solo se procesa **uno** cada vez; el resto espera en cola con su posición visible.',
       },
       {
-        name: 'Calidad (solo YouTube)',
+        name: 'Calidad',
         value: [
-          '`auto` — equilibrado (por defecto)',
+          '`auto` — equilibrado (**por defecto** si no eliges nada)',
           '`alta` — máxima calidad, más lento',
           '`rapida` — menos calidad, más rápido',
-          'X / Reddit / TikTok siempre usan calidad alta.',
+          'Vale para YouTube, X, Reddit y TikTok.',
         ].join('\n'),
       },
       {

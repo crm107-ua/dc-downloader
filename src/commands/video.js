@@ -18,7 +18,7 @@ const data = new SlashCommandBuilder()
   .addStringOption((option) =>
     option
       .setName('calidad')
-      .setDescription('YouTube: rapida / auto / alta (otros proveedores usan calidad alta)')
+      .setDescription('Compresión: auto (defecto) · alta · rapida')
       .setRequired(false)
       .addChoices(
         { name: 'Auto (recomendado)', value: 'auto' },
@@ -40,17 +40,13 @@ async function execute(interaction) {
   }
 
   const provider = resolveProviderByUrl(url);
-  const qualityMode =
-    provider && provider.id === 'youtube'
-      ? normalizeQualityMode(calidadOpt || 'auto')
-      : 'alta';
+  const qualityMode = normalizeQualityMode(calidadOpt || 'auto');
 
   await interaction.deferReply();
 
   const progress = createProgressReporter(interaction, {
     providerLabel: provider ? provider.label : '',
-    qualityMode: provider && provider.id === 'youtube' ? qualityMode : null,
-    isYouTube: Boolean(provider && provider.id === 'youtube'),
+    qualityMode,
   });
 
   let result;
