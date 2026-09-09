@@ -2,10 +2,11 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 
 function run(command, args, options = {}) {
+  const { onStdout, onStderr, ...spawnOptions } = options;
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       windowsHide: true,
-      ...options,
+      ...spawnOptions,
     });
 
     let stdout = '';
@@ -13,12 +14,16 @@ function run(command, args, options = {}) {
 
     if (child.stdout) {
       child.stdout.on('data', (chunk) => {
-        stdout += chunk.toString();
+        const text = chunk.toString();
+        stdout += text;
+        if (typeof onStdout === 'function') onStdout(text);
       });
     }
     if (child.stderr) {
       child.stderr.on('data', (chunk) => {
-        stderr += chunk.toString();
+        const text = chunk.toString();
+        stderr += text;
+        if (typeof onStderr === 'function') onStderr(text);
       });
     }
 
@@ -54,14 +59,25 @@ async function probeDuration(filePath) {
   return duration;
 }
 
+function parseFfmpegProgress(chunk, durationSeconds) {
+  if (!durationSeconds || durationSeconds <= 0) return null;
+  const match = /out_time_ms=(\d+)/.exec(chunk);
+  if (!match) {
+    if (/progress=end/.test(chunk)) return 100;
+    return null;
+  }
+  const outMs = Number(match[1]);
+  if (!Number.isFinite(outMs)) return null;
+  return Math.min(100, (outMs / 1000 / durationSeconds) * 100);
+}
+
 /**
  * Compress input so output is strictly under maxBytes.
- * Uses bitrate targeting, then a more aggressive 480p pass if needed.
+ * @param {(ratio: number, meta: { attempt: number, attempts: number }) => void} [onProgress]
  */
-async function compressToLimit(inputPath, outputPath, maxBytes) {
+async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
   const duration = await probeDuration(inputPath);
   const audioBitrateKbps = 96;
-  // Leave ~5% headroom under the hard cap
   const targetBytes = Math.floor(maxBytes * 0.95);
   const totalBitrateKbps = Math.max(
     80,
@@ -78,7 +94,8 @@ async function compressToLimit(inputPath, outputPath, maxBytes) {
 
   let lastError = null;
 
-  for (const attempt of attempts) {
+  for (let i = 0; i < attempts.length; i += 1) {
+    const attempt = attempts[i];
     const args = [
       '-y',
       '-i',
@@ -101,6 +118,9 @@ async function compressToLimit(inputPath, outputPath, maxBytes) {
       '+faststart',
       '-pix_fmt',
       'yuv420p',
+      '-progress',
+      'pipe:1',
+      '-nostats',
     ];
 
     if (attempt.scale) {
@@ -110,9 +130,36 @@ async function compressToLimit(inputPath, outputPath, maxBytes) {
     args.push(outputPath);
 
     try {
-      await run('ffmpeg', args);
+      let buffer = '';
+      await run('ffmpeg', args, {
+        onStdout: (text) => {
+          buffer += text;
+          const parts = buffer.split(/\r?\n/);
+          buffer = parts.pop() || '';
+          for (const line of parts) {
+            const local = parseFfmpegProgress(`${line}\n`, duration);
+            if (local == null || typeof onProgress !== 'function') continue;
+            // Distribute progress across attempts so retries still move the bar
+            const base = (i / attempts.length) * 100;
+            const span = 100 / attempts.length;
+            onProgress(base + (local / 100) * span, {
+              attempt: i + 1,
+              attempts: attempts.length,
+            });
+          }
+        },
+      });
+
+      if (typeof onProgress === 'function') {
+        onProgress(((i + 1) / attempts.length) * 100, {
+          attempt: i + 1,
+          attempts: attempts.length,
+        });
+      }
+
       const size = fs.statSync(outputPath).size;
       if (size <= maxBytes) {
+        if (typeof onProgress === 'function') onProgress(100, { attempt: i + 1, attempts: attempts.length });
         return {
           outputPath,
           sizeBytes: size,

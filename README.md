@@ -188,7 +188,7 @@ FFmpeg reencodea a H.264 + AAC calculando un bitrate objetivo a partir de la dur
 
 ### 6. Entrega
 
-El bot responde en el **mismo canal** unicamente con el archivo MP4. No se anade texto tipo plataforma / duracion / tamano.
+Mientras corre el pipeline, el bot sustituye el estado "thinking" de Discord por una barra de progreso (`Analizando` / `Descargando` / `Comprimiendo` / `Enviando`) con porcentaje real de yt-dlp y FFmpeg. Al terminar responde en el **mismo canal** unicamente con el archivo MP4.
 
 ### 7. Limpieza
 

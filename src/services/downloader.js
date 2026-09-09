@@ -5,6 +5,7 @@ const { getConfig } = require('../config');
 const { resolveProviderByUrl } = require('../providers');
 const { run, compressToLimit, probeDuration } = require('./compressor');
 const { scheduleTempCleanup } = require('./tempCleanup');
+const { mapRange } = require('../utils/progress');
 
 function ensureTempDir(tempDir) {
   const absolute = path.resolve(tempDir);
@@ -40,6 +41,14 @@ function providerFormatSelector(provider) {
   return 'bv*+ba/b';
 }
 
+function parseYtDlpPercent(text) {
+  // [download]  45.2% of ...  OR  [download] 100% of ...
+  const match = /\[download\]\s+(\d{1,3}(?:\.\d+)?)%/.exec(text);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? Math.min(100, value) : null;
+}
+
 async function fetchMetadata(url, config, provider) {
   const args = [
     '--dump-json',
@@ -72,10 +81,12 @@ function assertDuration(meta, maxDurationSeconds) {
   return duration;
 }
 
-async function downloadRaw(url, provider, outTemplate, config) {
+async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent) {
   const args = [
     '--no-playlist',
     '--no-warnings',
+    '--newline',
+    '--progress',
     ...providerExtraArgs(provider),
     '-f',
     providerFormatSelector(provider),
@@ -87,7 +98,22 @@ async function downloadRaw(url, provider, outTemplate, config) {
     url,
   ];
 
-  await run('yt-dlp', args);
+  let buffer = '';
+  await run('yt-dlp', args, {
+    onStderr: (text) => {
+      buffer += text;
+      const parts = buffer.split(/\r?\n/);
+      buffer = parts.pop() || '';
+      for (const line of parts) {
+        const pct = parseYtDlpPercent(line);
+        if (pct != null && typeof onDownloadPercent === 'function') {
+          onDownloadPercent(pct);
+        }
+      }
+    },
+  });
+
+  if (typeof onDownloadPercent === 'function') onDownloadPercent(100);
 }
 
 function findDownloadedFile(jobDir, jobId) {
@@ -100,10 +126,11 @@ function findDownloadedFile(jobDir, jobId) {
 }
 
 /**
- * Download, validate duration, compress under size limit.
- * Provider-specific behavior comes only from src/providers/*.
+ * @param {string} url
+ * @param {{ onProgress?: (percent: number, stage: string) => void | Promise<void> }} [options]
  */
-async function downloadAndPrepare(url) {
+async function downloadAndPrepare(url, options = {}) {
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : async () => {};
   const config = getConfig();
   const provider = resolveProviderByUrl(url);
   if (!provider) {
@@ -127,6 +154,7 @@ async function downloadAndPrepare(url) {
   };
 
   try {
+    await onProgress(2, 'metadata');
     console.log(`[${platform}] checking duration before download (max ${config.maxDurationSeconds}s)...`);
     const meta = await fetchMetadata(url, config, provider);
     const preDuration = assertDuration(meta, config.maxDurationSeconds);
@@ -135,10 +163,15 @@ async function downloadAndPrepare(url) {
     } else {
       console.log(`[${platform}] duration missing in metadata; will verify after download`);
     }
+    await onProgress(8, 'metadata');
 
     const outTemplate = path.join(jobDir, `${jobId}.%(ext)s`);
     console.log(`[${platform}] downloading...`);
-    await downloadRaw(url, provider, outTemplate, config);
+    await onProgress(8, 'download');
+    await downloadRaw(url, provider, outTemplate, config, (dlPct) => {
+      onProgress(mapRange(dlPct, 8, 72), 'download');
+    });
+    await onProgress(72, 'download');
 
     const rawPath = findDownloadedFile(jobDir, jobId);
     const probed = await probeDuration(rawPath);
@@ -150,11 +183,16 @@ async function downloadAndPrepare(url) {
     }
 
     const compressedPath = path.join(jobDir, `${jobId}-out.mp4`);
+    await onProgress(72, 'compress');
     const compressed = await compressToLimit(
       rawPath,
       compressedPath,
-      config.maxFileSizeBytes
+      config.maxFileSizeBytes,
+      (ratio) => {
+        onProgress(mapRange(ratio, 72, 95), 'compress');
+      }
     );
+    await onProgress(95, 'compress');
 
     const analysis =
       typeof provider.analyzeMeta === 'function' ? provider.analyzeMeta(meta) || {} : {};
@@ -163,6 +201,7 @@ async function downloadAndPrepare(url) {
       filePath: compressed.outputPath,
       title: meta.title || meta.id || 'video',
       platform,
+      providerLabel: provider.label,
       sizeBytes: compressed.sizeBytes,
       durationSeconds: compressed.durationSeconds,
       hadWatermarkOnly: Boolean(analysis.hadWatermarkOnly),
