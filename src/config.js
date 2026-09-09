@@ -5,16 +5,36 @@ const {
   allHosts,
 } = require('./providers');
 
+function parseIdList(raw) {
+  if (!raw) return [];
+  return String(raw)
+    .split(/[,;\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function getConfig() {
   const maxDuration = Number(process.env.MAX_DURATION_SECONDS || 600);
   const maxFileSizeMb = Number(process.env.MAX_FILE_SIZE_MB || 10);
   const tempDir = process.env.TEMP_DIR || './temp';
   const tempMaxAgeHours = Number(process.env.TEMP_MAX_AGE_HOURS || 24);
 
+  // Preferred: DISCORD_ALLOWED_GUILD_IDS=id1,id2
+  // Backward-compatible fallbacks for older .env names
+  const allowedGuildIds = [
+    ...parseIdList(process.env.DISCORD_ALLOWED_GUILD_IDS),
+    ...parseIdList(process.env.DISCORD_GUILD_ID),
+    ...parseIdList(process.env.DISCORD_CHANNEL_ID),
+    ...parseIdList(process.env.DISCORD_CHANNEL_ID_2),
+    ...parseIdList(process.env.DICORD_CHANNEL_ID),
+    ...parseIdList(process.env.DICORD_CHANNEL_ID_2),
+  ];
+  const uniqueGuildIds = [...new Set(allowedGuildIds)];
+
   return {
     token: process.env.DISCORD_BOT_TOKEN,
     clientId: process.env.DISCORD_CLIENT_ID,
-    guildId: process.env.DISCORD_GUILD_ID || '',
+    allowedGuildIds: uniqueGuildIds,
     cookiesFile: process.env.COOKIES_FILE || '',
     cookiesFromBrowser: process.env.COOKIES_FROM_BROWSER || '',
     maxDurationSeconds: Number.isFinite(maxDuration) ? maxDuration : 600,
@@ -23,6 +43,13 @@ function getConfig() {
     tempDir,
     tempMaxAgeHours: Number.isFinite(tempMaxAgeHours) && tempMaxAgeHours > 0 ? tempMaxAgeHours : 24,
   };
+}
+
+function isGuildAllowed(guildId, config = getConfig()) {
+  if (!guildId) return false;
+  const allowed = config.allowedGuildIds || [];
+  if (!allowed.length) return false;
+  return allowed.includes(String(guildId));
 }
 
 function parseAllowedUrl(raw) {
@@ -55,6 +82,7 @@ function detectPlatform(urlString) {
 
 module.exports = {
   getConfig,
+  isGuildAllowed,
   parseAllowedUrl,
   detectPlatform,
   allHosts,

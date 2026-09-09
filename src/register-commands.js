@@ -10,52 +10,42 @@ async function registerCommands() {
   if (!config.token || !config.clientId) {
     throw new Error('Faltan DISCORD_BOT_TOKEN o DISCORD_CLIENT_ID en .env');
   }
+  if (!config.allowedGuildIds.length) {
+    throw new Error(
+      'Falta DISCORD_ALLOWED_GUILD_IDS en .env (IDs de servidores permitidos, separados por coma).'
+    );
+  }
 
   const body = [videoCommand.data.toJSON(), helpCommand.data.toJSON()];
   const rest = new REST({ version: '10' }).setToken(config.token);
+  const allowed = new Set(config.allowedGuildIds.map(String));
 
-  // Only ONE registration surface to avoid duplicate suggestions in Discord:
-  // - With DISCORD_GUILD_ID: guild-only (instant) + clear global
-  // - Without: global-only + clear guild command sets
-  const guildIds = new Set();
-  if (config.guildId) guildIds.add(config.guildId);
+  // Never register globally — avoids use outside allowlisted servers
+  await rest.put(Routes.applicationCommands(config.clientId), { body: [] });
+  console.log('Global commands cleared');
 
+  // Discover guilds the bot is currently in
+  const presentGuildIds = new Set();
   try {
     const guilds = await rest.get(Routes.userGuilds());
     for (const guild of guilds) {
-      if (guild && guild.id) guildIds.add(guild.id);
+      if (guild && guild.id) presentGuildIds.add(String(guild.id));
     }
   } catch (err) {
     console.warn('No se pudieron listar guilds:', err.message || err);
   }
 
-  if (config.guildId) {
-    // Instant guild commands; wipe global so Discord does not show duplicates
-    await rest.put(Routes.applicationCommands(config.clientId), { body: [] });
-    console.log('Global commands cleared (avoiding duplicates)');
+  // Register slash commands only on allowed guilds
+  for (const guildId of allowed) {
+    await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body });
+    console.log(`Guild ${guildId}: /video, /help`);
+  }
 
-    for (const guildId of guildIds) {
-      const guildBody = guildId === config.guildId ? body : [];
-      await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), {
-        body: guildBody,
-      });
-      console.log(
-        guildId === config.guildId
-          ? `Guild ${guildId}: /video, /help`
-          : `Guild ${guildId}: commands cleared`
-      );
-    }
-  } else {
-    // Global only; wipe any leftover guild registrations
-    await rest.put(Routes.applicationCommands(config.clientId), { body });
-    console.log('Global commands: /video, /help');
-
-    for (const guildId of guildIds) {
-      await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), {
-        body: [],
-      });
-      console.log(`Guild ${guildId}: commands cleared (avoiding duplicates)`);
-    }
+  // Clear commands on any other guild the bot somehow joined
+  for (const guildId of presentGuildIds) {
+    if (allowed.has(guildId)) continue;
+    await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body: [] });
+    console.log(`Guild ${guildId}: commands cleared (not allowlisted)`);
   }
 }
 
