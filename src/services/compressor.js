@@ -1,7 +1,9 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
-const DEFAULT_TIMEOUT_MS = 120 * 1000;
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 function run(command, args, options = {}) {
   const {
@@ -146,27 +148,50 @@ function parseFfmpegProgress(chunk, durationSeconds) {
   return null;
 }
 
-function pickScale(durationSeconds) {
-  if (durationSeconds > 300) return '640:360';
-  if (durationSeconds > 150) return '854:480';
-  return '1280:720';
+/** Choose output resolution from available video bitrate for best perceived quality */
+function pickScaleForBitrate(videoBitrateKbps) {
+  if (videoBitrateKbps >= 1800) return '1920:1080';
+  if (videoBitrateKbps >= 900) return '1280:720';
+  if (videoBitrateKbps >= 450) return '854:480';
+  if (videoBitrateKbps >= 250) return '640:360';
+  return '480:270';
+}
+
+function makeProgressHandler(duration, onProgress, passIndex, passCount) {
+  let buffer = '';
+  return (text) => {
+    if (typeof onProgress !== 'function') return;
+    buffer += text;
+    const parts = buffer.split(/\r?\n/);
+    buffer = parts.pop() || '';
+    for (const line of parts) {
+      const local = parseFfmpegProgress(`${line}\n`, duration);
+      if (local == null) continue;
+      const base = (passIndex / passCount) * 100;
+      const span = 100 / passCount;
+      onProgress(base + (local / 100) * span, {
+        attempt: passIndex + 1,
+        attempts: passCount,
+      });
+    }
+  };
 }
 
 /**
- * Fast + decent quality path to Discord size limit.
- * Skip encode when already small; otherwise veryfast x264 @ ~720p.
+ * Quality-first compression under maxBytes.
+ * Uses 2-pass x264 when needed; prefers readable resolution for the target bitrate.
  */
 async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
   const duration = await probeDuration(inputPath);
   const inputSize = fs.statSync(inputPath).size;
 
   if (inputSize <= maxBytes) {
-    if (typeof onProgress === 'function') onProgress(20, { attempt: 1, attempts: 1 });
+    if (typeof onProgress === 'function') onProgress(15, { attempt: 1, attempts: 1 });
     try {
       await run(
         'ffmpeg',
         ['-y', '-i', inputPath, '-c', 'copy', '-movflags', '+faststart', outputPath],
-        { timeoutMs: 45000 }
+        { timeoutMs: 60000 }
       );
       if (fs.existsSync(outputPath) && fs.statSync(outputPath).size <= maxBytes) {
         if (typeof onProgress === 'function') onProgress(100, { attempt: 1, attempts: 1 });
@@ -177,7 +202,7 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
         };
       }
     } catch {
-      // Fall through
+      // Fall through to re-encode
     }
     fs.copyFileSync(inputPath, outputPath);
     if (typeof onProgress === 'function') onProgress(100, { attempt: 1, attempts: 1 });
@@ -188,92 +213,166 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress) {
     };
   }
 
-  const audioBitrateKbps = 96;
-  const targetBytes = Math.floor(maxBytes * 0.93);
-  const totalBitrateKbps = Math.max(
-    120,
-    Math.floor((targetBytes * 8) / duration / 1000)
-  );
-  const videoBitrateKbps = Math.max(80, totalBitrateKbps - audioBitrateKbps);
-  const primaryScale = pickScale(duration);
+  // Leave headroom under Discord cap
+  const targetBytes = Math.floor(maxBytes * 0.94);
+  const totalBitrateKbps = Math.max(160, Math.floor((targetBytes * 8) / duration / 1000));
 
-  // 2 attempts: good quality first, then smaller/faster if needed
+  // Keep enough audio for clarity; rest goes to video
+  const audioBitrateKbps = totalBitrateKbps >= 400 ? 128 : totalBitrateKbps >= 250 ? 96 : 64;
+  const videoBitrateKbps = Math.max(100, totalBitrateKbps - audioBitrateKbps);
+  const scale = pickScaleForBitrate(videoBitrateKbps);
+
+  // Quality ladder: medium 2-pass first, then smaller scale if still oversize
   const attempts = [
+    { videoBitrateKbps, scale, preset: 'medium', twoPass: true },
     {
-      videoBitrateKbps,
-      scale: primaryScale,
-      preset: duration > 150 ? 'ultrafast' : 'veryfast',
+      videoBitrateKbps: Math.max(90, Math.floor(videoBitrateKbps * 0.85)),
+      scale: pickScaleForBitrate(videoBitrateKbps * 0.75),
+      preset: 'medium',
+      twoPass: true,
     },
     {
-      videoBitrateKbps: Math.max(64, Math.floor(videoBitrateKbps * 0.7)),
-      scale: duration > 150 ? '480:270' : '854:480',
-      preset: 'ultrafast',
+      videoBitrateKbps: Math.max(80, Math.floor(videoBitrateKbps * 0.7)),
+      scale: pickScaleForBitrate(videoBitrateKbps * 0.55),
+      preset: 'slow',
+      twoPass: false,
     },
   ];
 
+  const passLogBase = path.join(os.tmpdir(), `dc-dlp-${process.pid}-${Date.now()}`);
   let lastError = null;
-  // Longer clips get more time, but still capped so Discord never hangs
-  const attemptTimeoutMs = Math.min(120000, Math.max(25000, Math.ceil(duration * 280)));
+  // Allow longer encodes; heartbeat keeps Discord UI alive
+  const attemptTimeoutMs = Math.min(12 * 60 * 1000, Math.max(90 * 1000, Math.ceil(duration * 1500)));
 
   for (let i = 0; i < attempts.length; i += 1) {
     const attempt = attempts[i];
-    const args = [
-      '-y',
-      '-threads',
-      '0',
-      '-i',
-      inputPath,
+    const vf = `scale=${attempt.scale}:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p`;
+    const commonVideo = [
       '-vf',
-      `scale=${attempt.scale}:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p`,
+      vf,
       '-c:v',
       'libx264',
       '-preset',
       attempt.preset,
       '-profile:v',
-      'main',
+      'high',
+      '-pix_fmt',
+      'yuv420p',
       '-b:v',
       `${attempt.videoBitrateKbps}k`,
       '-maxrate',
-      `${attempt.videoBitrateKbps}k`,
+      `${Math.floor(attempt.videoBitrateKbps * 1.15)}k`,
       '-bufsize',
       `${attempt.videoBitrateKbps * 2}k`,
-      '-c:a',
-      'aac',
-      '-b:a',
-      `${audioBitrateKbps}k`,
-      '-ac',
-      '2',
-      '-ar',
-      '44100',
-      '-movflags',
-      '+faststart',
-      '-progress',
-      'pipe:1',
-      '-nostats',
-      outputPath,
+      '-x264-params',
+      'aq-mode=3:aq-strength=0.9:ref=3:me=umh:subme=7',
     ];
 
     try {
-      let buffer = '';
-      await run('ffmpeg', args, {
-        timeoutMs: attemptTimeoutMs,
-        rollingBuffer: true,
-        onStdout: (text) => {
-          buffer += text;
-          const parts = buffer.split(/\r?\n/);
-          buffer = parts.pop() || '';
-          for (const line of parts) {
-            const local = parseFfmpegProgress(`${line}\n`, duration);
-            if (local == null || typeof onProgress !== 'function') continue;
-            const base = (i / attempts.length) * 100;
-            const span = 100 / attempts.length;
-            onProgress(base + (local / 100) * span, {
-              attempt: i + 1,
-              attempts: attempts.length,
-            });
+      if (attempt.twoPass) {
+        const passlog = `${passLogBase}-${i}`;
+        // Pass 1
+        await run(
+          'ffmpeg',
+          [
+            '-y',
+            '-threads',
+            '0',
+            '-i',
+            inputPath,
+            ...commonVideo,
+            '-pass',
+            '1',
+            '-passlogfile',
+            passlog,
+            '-an',
+            '-f',
+            'null',
+            process.platform === 'win32' ? 'NUL' : '/dev/null',
+          ],
+          {
+            timeoutMs: attemptTimeoutMs,
+            rollingBuffer: true,
+            onStderr: makeProgressHandler(duration, onProgress, i * 2, attempts.length * 2),
           }
-        },
-      });
+        );
+
+        // Pass 2
+        await run(
+          'ffmpeg',
+          [
+            '-y',
+            '-threads',
+            '0',
+            '-i',
+            inputPath,
+            ...commonVideo,
+            '-pass',
+            '2',
+            '-passlogfile',
+            passlog,
+            '-c:a',
+            'aac',
+            '-b:a',
+            `${audioBitrateKbps}k`,
+            '-ac',
+            '2',
+            '-ar',
+            '44100',
+            '-movflags',
+            '+faststart',
+            '-progress',
+            'pipe:1',
+            '-nostats',
+            outputPath,
+          ],
+          {
+            timeoutMs: attemptTimeoutMs,
+            rollingBuffer: true,
+            onStdout: makeProgressHandler(duration, onProgress, i * 2 + 1, attempts.length * 2),
+          }
+        );
+
+        // Cleanup x264 pass logs
+        for (const suffix of ['-0.log', '-0.log.mbtree', '.log', '.log.mbtree']) {
+          try {
+            fs.unlinkSync(`${passlog}${suffix}`);
+          } catch {
+            // ignore
+          }
+        }
+      } else {
+        await run(
+          'ffmpeg',
+          [
+            '-y',
+            '-threads',
+            '0',
+            '-i',
+            inputPath,
+            ...commonVideo,
+            '-c:a',
+            'aac',
+            '-b:a',
+            `${audioBitrateKbps}k`,
+            '-ac',
+            '2',
+            '-ar',
+            '44100',
+            '-movflags',
+            '+faststart',
+            '-progress',
+            'pipe:1',
+            '-nostats',
+            outputPath,
+          ],
+          {
+            timeoutMs: attemptTimeoutMs,
+            rollingBuffer: true,
+            onStdout: makeProgressHandler(duration, onProgress, i, attempts.length),
+          }
+        );
+      }
 
       if (typeof onProgress === 'function') {
         onProgress(((i + 1) / attempts.length) * 100, {

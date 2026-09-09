@@ -35,24 +35,15 @@ function providerExtraArgs(provider) {
 }
 
 function providerFormatSelector(provider, durationSeconds = null) {
+  // Always prefer a high-quality source; compressor handles size with 2-pass.
+  // Only slightly cap very long clips so download itself does not take forever.
   const dur = Number(durationSeconds);
-  // Long clips: download smaller sources so compress stays fast
-  if (Number.isFinite(dur) && dur > 0) {
-    if (dur > 300) {
-      return [
-        'bv*[height<=360][vcodec^=avc1]+ba[ext=m4a]/b[height<=360][ext=mp4]',
-        'bv*[height<=360]+ba/b[height<=360]',
-        'best[height<=360]/best',
-      ].join('/');
-    }
-    if (dur > 150) {
-      return [
-        'bv*[height<=480][vcodec^=avc1]+ba[ext=m4a]/b[height<=480][ext=mp4]',
-        'bv*[height<=480]+ba/b[height<=480]',
-        'bv*[height<=720]+ba/b[height<=720]',
-        'best[height<=480]/best',
-      ].join('/');
-    }
+  if (Number.isFinite(dur) && dur > 480) {
+    return [
+      'bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][ext=mp4]',
+      'bv*[height<=720]+ba/b[height<=720]',
+      'best[height<=720]/best',
+    ].join('/');
   }
   if (provider && typeof provider.formatSelector === 'function') {
     return provider.formatSelector();
