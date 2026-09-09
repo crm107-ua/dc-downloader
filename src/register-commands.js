@@ -35,17 +35,28 @@ async function registerCommands() {
     console.warn('No se pudieron listar guilds:', err.message || err);
   }
 
-  // Register slash commands only on allowed guilds
+  // Register slash commands only on allowed guilds (skip if bot lacks access yet)
   for (const guildId of allowed) {
-    await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body });
-    console.log(`Guild ${guildId}: /video, /help`);
+    try {
+      await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body });
+      console.log(`Guild ${guildId}: /video, /help`);
+    } catch (err) {
+      console.warn(
+        `Guild ${guildId}: no se pudieron registrar comandos (${err.message || err}). ` +
+          'Comprueba que el ID es de un servidor (no canal) y que el bot ya está invitado allí.'
+      );
+    }
   }
 
   // Clear commands on any other guild the bot somehow joined
   for (const guildId of presentGuildIds) {
     if (allowed.has(guildId)) continue;
-    await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body: [] });
-    console.log(`Guild ${guildId}: commands cleared (not allowlisted)`);
+    try {
+      await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body: [] });
+      console.log(`Guild ${guildId}: commands cleared (not allowlisted)`);
+    } catch (err) {
+      console.warn(`Guild ${guildId}: no se pudo limpiar comandos:`, err.message || err);
+    }
   }
 }
 

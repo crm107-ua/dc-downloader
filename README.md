@@ -204,7 +204,7 @@ Mientras corre el pipeline, el bot sustituye el estado "thinking" de Discord por
 | `/video url:<enlace>` | Descarga, comprime y publica el video en el canal |
 | `/help` | Muestra ayuda de uso (ephemeral); lista providers del registry |
 
-Si Discord sigue mostrando `/download`, es cache de comandos globales antiguos. El registro actual solo publica `/video` y `/help`. Ejecuta `npm run register` (o reinicia el bot) y, si hace falta, espera unos minutos o configura `DISCORD_GUILD_ID` para propagacion instantanea en tu servidor.
+Si Discord sigue mostrando `/download`, es cache de comandos globales antiguos. El registro actual solo publica `/video` y `/help` en los servidores de `DISCORD_ALLOWED_GUILD_IDS`. Ejecuta `npm run register` (o reinicia el bot).
 
 ---
 
@@ -242,12 +242,13 @@ https://discord.com/api/oauth2/authorize?client_id=1547154925249634396&permissio
 
 Sustituye el `client_id` si usas otra aplicacion.
 
-Para que los slash commands se actualicen al instante en un servidor concreto, anade su ID en `.env`:
+Para restringir el bot a servidores concretos, configura en `.env`:
 
 ```env
-DISCORD_GUILD_ID=tu_guild_id
+DISCORD_ALLOWED_GUILD_IDS=1119618150053466152,538027285580873728
 ```
 
+Cualquier invitacion a otro servidor se rechaza (el bot sale automaticamente) y los comandos solo responden en esos guilds.
 ---
 
 ## Variables de entorno
@@ -256,7 +257,7 @@ DISCORD_GUILD_ID=tu_guild_id
 |----------|-------------|-------------|---------|
 | `DISCORD_BOT_TOKEN` | Si | Token del bot | — |
 | `DISCORD_CLIENT_ID` | Si | Application ID | — |
-| `DISCORD_GUILD_ID` | No | Registro instantaneo de slash en un guild | vacio (solo global) |
+| `DISCORD_ALLOWED_GUILD_IDS` | Si | IDs de servidores permitidos (coma-separados) | — |
 | `MAX_DURATION_SECONDS` | No | Duracion maxima permitida (pre-descarga) | `600` |
 | `MAX_FILE_SIZE_MB` | No | Tamano maximo del MP4 enviado | `10` |
 | `TEMP_DIR` | No | Directorio de trabajo temporal | `./temp` |
