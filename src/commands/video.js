@@ -70,7 +70,7 @@ async function execute(interaction) {
       }
     );
   } catch (err) {
-    progress.close();
+    await progress.close();
     let message = err && err.message ? err.message : 'Error desconocido al descargar.';
     if (/authentication is required|cookies/i.test(message)) {
       message =
@@ -89,19 +89,27 @@ async function execute(interaction) {
     const safeName = `${result.platform}-${Date.now()}.mp4`;
     const attachment = new AttachmentBuilder(result.filePath, { name: safeName });
 
-    progress.close();
-    await interaction.editReply({
-      content: null,
-      embeds: [],
+    // Delete the progress reply (edited many times) and send a fresh message
+    // so Discord does not show the final video as "edited".
+    await progress.close();
+    await interaction.deleteReply().catch(() => {});
+    await interaction.followUp({
       files: [attachment],
     });
   } catch (err) {
-    progress.close();
+    await progress.close();
     const message = err && err.message ? err.message : 'Error al enviar el archivo.';
-    await interaction.editReply({
-      content: `Descarga OK pero falló el envío:\n\`\`\`${message.slice(0, 1500)}\`\`\``,
-      embeds: [],
-    });
+    try {
+      await interaction.editReply({
+        content: `Descarga OK pero falló el envío:\n\`\`\`${message.slice(0, 1500)}\`\`\``,
+        embeds: [],
+        files: [],
+      });
+    } catch {
+      await interaction.followUp({
+        content: `Descarga OK pero falló el envío:\n\`\`\`${message.slice(0, 1500)}\`\`\``,
+      }).catch(() => {});
+    }
   } finally {
     if (result && typeof result.cleanup === 'function') {
       result.cleanup();

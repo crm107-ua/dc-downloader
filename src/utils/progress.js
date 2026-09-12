@@ -147,6 +147,8 @@ function createProgressReporter(interaction, { providerLabel, qualityMode } = {}
         clearInterval(heartbeat);
         heartbeat = null;
       }
+      // Wait for any in-flight edit so deleteReply does not race with progress
+      return chain.catch(() => {});
     },
   };
 }
