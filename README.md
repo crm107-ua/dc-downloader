@@ -17,7 +17,7 @@ Diseñado para ser **claro de usar**, **seguro** (solo servidores autorizados) y
 7. [Proveedores](#proveedores)
 8. [Requisitos](#requisitos)
 9. [Instalación](#instalación)
-10. [Variables de entorno](#variables-de-entorno)
+10. [Variables de entorno](#variables-de-entorno) · [Alcance por servidor](#alcance-por-servidor)
 11. [Producción (PM2)](#producción-pm2)
 12. [Pruebas](#pruebas)
 13. [Estructura del proyecto](#estructura-del-proyecto)
@@ -214,7 +214,7 @@ npm start
 https://discord.com/api/oauth2/authorize?client_id=TU_CLIENT_ID&permissions=2147485696&scope=bot%20applications.commands
 ```
 
-El bot **abandona** automáticamente cualquier guild que no esté en `DISCORD_ALLOWED_GUILD_IDS`.
+El bot registra slash commands **solo** en los guilds de la allowlist (no globales). Ver [Alcance por servidor](#alcance-por-servidor).
 
 ---
 
@@ -224,7 +224,7 @@ El bot **abandona** automáticamente cualquier guild que no esté en `DISCORD_AL
 |----------|-------------|-------------|---------|
 | `DISCORD_BOT_TOKEN` | Sí | Token del bot | — |
 | `DISCORD_CLIENT_ID` | Sí | Application ID | — |
-| `DISCORD_ALLOWED_GUILD_IDS` | Sí | Guilds permitidos (coma-separados) | — |
+| `DISCORD_ALLOWED_GUILD_IDS` | Sí | IDs de servidores donde el bot puede operar (lista separada por comas) | — |
 | `MAX_DURATION_SECONDS` | No | Duración máxima pre-descarga | `600` |
 | `MAX_FILE_SIZE_MB` | No | Tope del MP4 enviado | `10` |
 | `TEMP_DIR` | No | Workspace temporal | `./temp` |
@@ -233,6 +233,16 @@ El bot **abandona** automáticamente cualquier guild que no esté en `DISCORD_AL
 | `COOKIES_FROM_BROWSER` | No | p. ej. `chrome`, `edge`, `firefox` | — |
 
 Plantilla: [`.env.example`](.env.example). **No** commits de `.env`.
+
+### Alcance por servidor
+
+El uso del bot se limita a los servidores indicados en `DISCORD_ALLOWED_GUILD_IDS`. Es una lista de snowflake IDs de Discord, separados por coma:
+
+```env
+DISCORD_ALLOWED_GUILD_IDS=1119618150053466152,538027285580873728
+```
+
+Al arrancar, el proceso registra `/video` y `/help` en esos guilds y deja constancia en log (`Servidores permitidos: …`). Si el bot está presente en un servidor que no figura en la lista, lo abandona. Sin esta variable el proceso no inicia.
 
 ---
 
