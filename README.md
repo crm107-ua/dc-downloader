@@ -329,7 +329,7 @@ dc-downloader/
 | **X / Twitter** | `x.com`, `twitter.com` | `FAST_FORMAT` (≤1080p, H.264/MP4 preferido) | Opcional (`COOKIES_*`) si el post está restringido | Sin `normalizeUrl` ni `extraArgs` propios |
 | **Reddit** | `reddit.com`, `old.reddit.com` | `FAST_FORMAT` | Opcional (`COOKIES_*`) en posts con muro de edad/login | Sin `normalizeUrl` ni `extraArgs` propios |
 | **YouTube** | `youtube.com`, `youtu.be`, `youtube-nocookie.com` (watch, Shorts, embed, live) | `YOUTUBE_FORMAT` (≤1080p / 60 fps, AVC+M4A) | Opcional (`COOKIES_*`) en contenido con restricción de edad | `normalizeUrl` unifica a `watch?v=`; `extraArgs` usa clients `android,ios,web` |
-| **TikTok** | `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com` | Selectores que priorizan `play_addr` / sin watermark, luego `best` | No requerida en el flujo habitual | `analyzeMeta` indica si solo hay formatos con watermark |
+| **TikTok** | `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com` | Prefer `play_addr` / `h264_*` / `bytevc1_*`; evita el fallback watermarked `download` | No requerida en el flujo habitual | `normalizeUrl` limpia query; `extraArgs` usa `--impersonate chrome`; `analyzeMeta` detecta watermark |
 | **Instagram** | `instagram.com`, `instagr.am` (`/reel/`, `/p/`, `/tv/`, `/share/`) | `FAST_FORMAT` | Opcional (`COOKIES_*`) si la API exige sesión | `normalizeUrl` conserva el id del media y elimina query de tracking (`utm_*`, `stkn`, …) |
 
 ---
@@ -341,6 +341,7 @@ dc-downloader/
 | Bot no responde | Allowlist (si está activa); token; `pm2 logs` |
 | “Plataforma no soportada” | Host no registrado; tipografía del enlace |
 | Reddit/X/Instagram piden auth | `COOKIES_FILE` o `COOKIES_FROM_BROWSER` |
+| TikTok / Instagram fallan | Actualizar yt-dlp (`yt-dlp -U`); TikTok necesita `curl_cffi` (`pip install -U "yt-dlp[default,curl-cffi]"`) |
 | YouTube 403 / JSON raro | Actualizar yt-dlp; revisar `extraArgs` del provider |
 | Barra en cola | Normal: otro `/video` está activo |
 | Encode muy lento | Usar `calidad:rapida` o `auto` |

@@ -24,7 +24,11 @@ const FIXTURES = [
   },
   {
     name: 'tiktok',
-    url: 'https://www.tiktok.com/@closepop/video/7656070714595888406',
+    url: 'https://www.tiktok.com/@closepop/video/7653496247508028694',
+  },
+  {
+    name: 'tiktok-query',
+    url: 'https://www.tiktok.com/@closepop/video/7653496247508028694?is_from_webapp=1&sender_device=pc',
   },
   {
     name: 'instagram',
