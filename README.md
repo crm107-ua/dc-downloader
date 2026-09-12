@@ -21,7 +21,7 @@ Diseñado para ser **claro de usar**, **seguro** (solo servidores autorizados) y
 11. [Producción (PM2)](#producción-pm2)
 12. [Pruebas](#pruebas)
 13. [Estructura del proyecto](#estructura-del-proyecto)
-14. [Notas por plataforma](#notas-por-plataforma)
+14. [Plataformas](#plataformas)
 15. [Solución de problemas](#solución-de-problemas)
 
 ---
@@ -299,15 +299,15 @@ dc-downloader/
 
 ---
 
-## Notas por plataforma
+## Plataformas
 
-| Plataforma | Detalle |
-|------------|---------|
-| **X** | Suele ir sin cookies; casos restringidos → `COOKIES_*` |
-| **Reddit** | Posts sensibles a login → cookies |
-| **YouTube** | Clients en `extraArgs`; mantén yt-dlp al día |
-| **TikTok** | Prioriza streams sin watermark cuando existen |
-| **Instagram** | Reels y posts `/reel/` `/p/` `/tv/`; limpia `utm_*`/`stkn`; login muro → `COOKIES_*` |
+| Plataforma | Hosts / URLs | Formato fuente | Auth | Comportamiento específico |
+|------------|--------------|----------------|------|---------------------------|
+| **X / Twitter** | `x.com`, `twitter.com` | `FAST_FORMAT` (≤1080p, H.264/MP4 preferido) | Opcional (`COOKIES_*`) si el post está restringido | Sin `normalizeUrl` ni `extraArgs` propios |
+| **Reddit** | `reddit.com`, `old.reddit.com` | `FAST_FORMAT` | Opcional (`COOKIES_*`) en posts con muro de edad/login | Sin `normalizeUrl` ni `extraArgs` propios |
+| **YouTube** | `youtube.com`, `youtu.be`, `youtube-nocookie.com` (watch, Shorts, embed, live) | `YOUTUBE_FORMAT` (≤1080p / 60 fps, AVC+M4A) | Opcional (`COOKIES_*`) en contenido con restricción de edad | `normalizeUrl` unifica a `watch?v=`; `extraArgs` usa clients `android,ios,web` |
+| **TikTok** | `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com` | Selectores que priorizan `play_addr` / sin watermark, luego `best` | No requerida en el flujo habitual | `analyzeMeta` indica si solo hay formatos con watermark |
+| **Instagram** | `instagram.com`, `instagr.am` (`/reel/`, `/p/`, `/tv/`, `/share/`) | `FAST_FORMAT` | Opcional (`COOKIES_*`) si la API exige sesión | `normalizeUrl` conserva el id del media y elimina query de tracking (`utm_*`, `stkn`, …) |
 
 ---
 
