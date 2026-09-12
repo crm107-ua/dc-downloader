@@ -1,6 +1,6 @@
 # DC Downloader
 
-Bot de Discord que descarga videos cortos de **X**, **Reddit**, **YouTube** y **TikTok**, los comprime bajo un límite estricto de tamaño y los publica en el mismo canal.
+Bot de Discord que descarga videos cortos de **X**, **Reddit**, **YouTube**, **TikTok** e **Instagram**, los comprime bajo un límite estricto de tamaño y los publica en el mismo canal.
 
 Diseñado para ser **claro de usar**, **seguro** (solo servidores autorizados) y **fácil de extender** con nuevos proveedores.
 
@@ -172,7 +172,7 @@ Contrato en `src/providers/contract.js`. Registry en `src/providers/index.js`.
 | `formatSelector()` | Valor de `yt-dlp -f` |
 | `extraArgs()` | Flags extra |
 | `analyzeMeta(meta)` | Opcional (p. ej. watermark TikTok) |
-| `normalizeUrl(url)` | Opcional (p. ej. YouTube shorts/embed) |
+| `normalizeUrl(url)` | Opcional (p. ej. YouTube shorts/embed, Instagram reel/p) |
 
 ### Añadir un proveedor
 
@@ -229,7 +229,7 @@ El bot **abandona** automáticamente cualquier guild que no esté en `DISCORD_AL
 | `MAX_FILE_SIZE_MB` | No | Tope del MP4 enviado | `10` |
 | `TEMP_DIR` | No | Workspace temporal | `./temp` |
 | `TEMP_MAX_AGE_HOURS` | No | Edad máxima de residuos | `24` |
-| `COOKIES_FILE` | No | Cookies Netscape (X/Reddit/edad) | — |
+| `COOKIES_FILE` | No | Cookies Netscape (X/Reddit/Instagram/edad) | — |
 | `COOKIES_FROM_BROWSER` | No | p. ej. `chrome`, `edge`, `firefox` | — |
 
 Plantilla: [`.env.example`](.env.example). **No** commits de `.env`.
@@ -287,7 +287,7 @@ dc-downloader/
     │   ├── contract.js
     │   ├── index.js          # Registry
     │   ├── formats.js
-    │   ├── x.js | reddit.js | youtube.js | tiktok.js
+    │   ├── x.js | reddit.js | youtube.js | tiktok.js | instagram.js
     ├── services/
     │   ├── downloader.js
     │   ├── compressor.js
@@ -307,6 +307,7 @@ dc-downloader/
 | **Reddit** | Posts sensibles a login → cookies |
 | **YouTube** | Clients en `extraArgs`; mantén yt-dlp al día |
 | **TikTok** | Prioriza streams sin watermark cuando existen |
+| **Instagram** | Reels y posts `/reel/` `/p/` `/tv/`; limpia `utm_*`/`stkn`; login muro → `COOKIES_*` |
 
 ---
 
@@ -316,7 +317,7 @@ dc-downloader/
 |---------|-------------|
 | Bot no responde | Guild en allowlist; token; `pm2 logs` |
 | “Plataforma no soportada” | Host no registrado; tipografía del enlace |
-| Reddit/X piden auth | `COOKIES_FILE` o `COOKIES_FROM_BROWSER` |
+| Reddit/X/Instagram piden auth | `COOKIES_FILE` o `COOKIES_FROM_BROWSER` |
 | YouTube 403 / JSON raro | Actualizar yt-dlp; revisar `extraArgs` del provider |
 | Barra en cola | Normal: otro `/video` está activo |
 | Encode muy lento | Usar `calidad:rapida` o `auto` |

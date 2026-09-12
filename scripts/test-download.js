@@ -26,6 +26,18 @@ const FIXTURES = [
     name: 'tiktok',
     url: 'https://www.tiktok.com/@closepop/video/7656070714595888406',
   },
+  {
+    name: 'instagram',
+    url: 'https://www.instagram.com/reel/DdIKGyXyo6z/?stkn=MTU3ZXJwM2licnZuag==',
+  },
+  {
+    name: 'instagram-2',
+    url: 'https://www.instagram.com/reel/Dc4C0DNQ679/?stkn=NmFjajEydGd3cmts',
+  },
+  {
+    name: 'instagram-3',
+    url: 'https://www.instagram.com/reel/DZ8A-ziuOqA/?utm_source=ig_web_copy_link&stkn=NTc4MTIwNjQ2YQ==',
+  },
 ];
 
 function mb(bytes) {
@@ -69,9 +81,11 @@ async function testOne(fixture) {
 
 async function main() {
   const only = process.argv[2];
-  const list = only ? FIXTURES.filter((f) => f.name === only) : FIXTURES;
+  const list = only
+    ? FIXTURES.filter((f) => f.name === only || f.name.startsWith(`${only}-`))
+    : FIXTURES;
   if (!list.length) {
-    console.error(`Unknown fixture "${only}". Use: x | reddit | youtube | tiktok`);
+    console.error(`Unknown fixture "${only}". Use: x | reddit | youtube | tiktok | instagram`);
     process.exit(1);
   }
 

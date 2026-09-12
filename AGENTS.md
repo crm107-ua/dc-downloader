@@ -66,7 +66,7 @@ src/
     contract.js            # Contrato + matchesHost helper
     index.js               # PROVIDERS[] — ÚNICO sitio para registrar
     formats.js             # Selectores -f compartidos
-    x.js | reddit.js | youtube.js | tiktok.js
+    x.js | reddit.js | youtube.js | tiktok.js | instagram.js
 
   services/
     downloader.js          # Pipeline: meta → download → compress → cleanup

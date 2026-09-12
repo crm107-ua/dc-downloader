@@ -3,13 +3,14 @@ const x = require('./x');
 const reddit = require('./reddit');
 const youtube = require('./youtube');
 const tiktok = require('./tiktok');
+const instagram = require('./instagram');
 
 /**
  * Ordered registry of video providers.
  * To add a new site: create src/providers/<id>.js and append it here.
  * No other pipeline files need platform-specific branches.
  */
-const PROVIDERS = [x, reddit, youtube, tiktok];
+const PROVIDERS = [x, reddit, youtube, tiktok, instagram];
 
 function listProviders() {
   return [...PROVIDERS];

@@ -15,7 +15,7 @@
 | `alta` | Mejor imagen, más lento |
 | `rapida` | Más rápido, menor calidad |
 
-Vale para YouTube, X, Reddit y TikTok.
+Vale para YouTube, X, Reddit, TikTok e Instagram.
 
 ## Ejemplo
 
@@ -29,6 +29,7 @@ Vale para YouTube, X, Reddit y TikTok.
 - Reddit
 - YouTube
 - TikTok (sin marca de agua cuando la API lo permite)
+- Instagram (reels y posts con video)
 
 ## Límites
 
@@ -41,6 +42,6 @@ Vale para YouTube, X, Reddit y TikTok.
 
 - Barra de progreso con tiempo mientras descarga y comprime
 - Al terminar envía solo el video en el mismo canal
-- Si Reddit/X fallan por login, hace falta configurar cookies en el servidor
+- Si Reddit/X/Instagram fallan por login, hace falta configurar cookies en el servidor
 
 by Wanikoko

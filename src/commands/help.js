@@ -38,7 +38,7 @@ async function execute(interaction) {
           '`auto` — equilibrado (**por defecto** si no eliges nada)',
           '`alta` — máxima calidad, más lento',
           '`rapida` — menos calidad, más rápido',
-          'Vale para YouTube, X, Reddit y TikTok.',
+          `Vale para ${supportedLabels()}.`,
         ].join('\n'),
       },
       {
@@ -58,7 +58,7 @@ async function execute(interaction) {
       }
     )
     .setFooter({
-      text: 'Si Reddit/X fallan por login, configura COOKIES_FILE o COOKIES_FROM_BROWSER en .env',
+      text: 'Si Reddit/X/Instagram fallan por login, configura COOKIES_FILE o COOKIES_FROM_BROWSER en .env',
     });
 
   await interaction.reply({ embeds: [embed], ephemeral: true });
