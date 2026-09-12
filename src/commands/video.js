@@ -89,26 +89,26 @@ async function execute(interaction) {
     const safeName = `${result.platform}-${Date.now()}.mp4`;
     const attachment = new AttachmentBuilder(result.filePath, { name: safeName });
 
-    // Delete the progress reply (edited many times) and send a fresh message
-    // so Discord does not show the final video as "edited".
+    // Delete progress reply, then send a standalone channel message (not followUp).
+    // followUp replies to the interaction message — if that was deleted, Discord
+    // shows "No se ha podido cargar el mensaje" above the video.
     await progress.close();
     await interaction.deleteReply().catch(() => {});
-    await interaction.followUp({
+    await interaction.channel.send({
       files: [attachment],
     });
   } catch (err) {
     await progress.close();
     const message = err && err.message ? err.message : 'Error al enviar el archivo.';
+    const errorText = `Descarga OK pero falló el envío:\n\`\`\`${message.slice(0, 1500)}\`\`\``;
     try {
       await interaction.editReply({
-        content: `Descarga OK pero falló el envío:\n\`\`\`${message.slice(0, 1500)}\`\`\``,
+        content: errorText,
         embeds: [],
         files: [],
       });
     } catch {
-      await interaction.followUp({
-        content: `Descarga OK pero falló el envío:\n\`\`\`${message.slice(0, 1500)}\`\`\``,
-      }).catch(() => {});
+      await interaction.channel.send({ content: errorText }).catch(() => {});
     }
   } finally {
     if (result && typeof result.cleanup === 'function') {
