@@ -1,8 +1,8 @@
 require('dotenv').config();
 
 const { Client, Events, GatewayIntentBits } = require('discord.js');
-const { getConfig, isGuildAllowed } = require('./config');
-const { registerCommands } = require('./register-commands');
+const { getConfig, isGuildAllowed, isGuildAllowlistEnabled } = require('./config');
+const { registerCommands, registerCommandsForGuild } = require('./register-commands');
 const videoCommand = require('./commands/video');
 const helpCommand = require('./commands/help');
 
@@ -29,12 +29,14 @@ async function main() {
     console.error('Faltan DISCORD_BOT_TOKEN o DISCORD_CLIENT_ID en .env');
     process.exit(1);
   }
-  if (!config.allowedGuildIds.length) {
-    console.error('Falta DISCORD_ALLOWED_GUILD_IDS en .env');
-    process.exit(1);
+
+  const restricted = isGuildAllowlistEnabled(config);
+  if (restricted) {
+    console.log(`Servidores permitidos: ${config.allowedGuildIds.join(', ')}`);
+  } else {
+    console.log('Servidores permitidos: todos (DISCORD_ALLOWED_GUILD_IDS vacío)');
   }
 
-  console.log(`Servidores permitidos: ${config.allowedGuildIds.join(', ')}`);
   await registerCommands();
 
   const client = new Client({
@@ -44,7 +46,8 @@ async function main() {
   client.once(Events.ClientReady, async (c) => {
     console.log(`Listo como ${c.user.tag}`);
 
-    // Leave any unauthorized guilds already joined
+    if (!restricted) return;
+
     for (const [, guild] of c.guilds.cache) {
       if (!isGuildAllowed(guild.id, config)) {
         await leaveUnauthorizedGuild(guild, 'not in DISCORD_ALLOWED_GUILD_IDS');
@@ -52,12 +55,20 @@ async function main() {
     }
   });
 
-  // If invited elsewhere, leave immediately
   client.on(Events.GuildCreate, async (guild) => {
-    if (!isGuildAllowed(guild.id, config)) {
+    if (restricted && !isGuildAllowed(guild.id, config)) {
       await leaveUnauthorizedGuild(guild, 'invite blocked — not allowlisted');
-    } else {
-      console.log(`[guard] joined allowlisted guild ${guild.id} (${guild.name})`);
+      return;
+    }
+
+    console.log(`[guard] joined guild ${guild.id} (${guild.name})`);
+    try {
+      await registerCommandsForGuild(guild.id);
+    } catch (err) {
+      console.warn(
+        `[guard] failed to register commands for guild ${guild.id}:`,
+        err.message || err
+      );
     }
   });
 

@@ -5,26 +5,43 @@ const { getConfig } = require('./config');
 const videoCommand = require('./commands/video');
 const helpCommand = require('./commands/help');
 
+function commandBodies() {
+  return [videoCommand.data.toJSON(), helpCommand.data.toJSON()];
+}
+
+function createRest(token) {
+  return new REST({ version: '10' }).setToken(token);
+}
+
+async function registerGuildCommands(rest, clientId, guildId, body = commandBodies()) {
+  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
+}
+
+async function clearGuildCommands(rest, clientId, guildId) {
+  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [] });
+}
+
+/**
+ * Register slash commands.
+ * - Allowlist set: only those guild IDs; clear commands elsewhere.
+ * - Allowlist empty: every guild the bot is currently in (unrestricted mode).
+ */
 async function registerCommands() {
   const config = getConfig();
   if (!config.token || !config.clientId) {
     throw new Error('Faltan DISCORD_BOT_TOKEN o DISCORD_CLIENT_ID en .env');
   }
-  if (!config.allowedGuildIds.length) {
-    throw new Error(
-      'Falta DISCORD_ALLOWED_GUILD_IDS en .env (IDs de servidores permitidos, separados por coma).'
-    );
-  }
 
-  const body = [videoCommand.data.toJSON(), helpCommand.data.toJSON()];
-  const rest = new REST({ version: '10' }).setToken(config.token);
-  const allowed = new Set(config.allowedGuildIds.map(String));
+  const body = commandBodies();
+  const rest = createRest(config.token);
+  const allowlist = config.allowedGuildIds.map(String);
+  const restricted = allowlist.length > 0;
+  const allowed = new Set(allowlist);
 
-  // Never register globally — avoids use outside allowlisted servers
+  // Prefer guild commands over global to avoid duplicates and stale globals
   await rest.put(Routes.applicationCommands(config.clientId), { body: [] });
   console.log('Global commands cleared');
 
-  // Discover guilds the bot is currently in
   const presentGuildIds = new Set();
   try {
     const guilds = await rest.get(Routes.userGuilds());
@@ -35,10 +52,11 @@ async function registerCommands() {
     console.warn('No se pudieron listar guilds:', err.message || err);
   }
 
-  // Register slash commands only on allowed guilds (skip if bot lacks access yet)
-  for (const guildId of allowed) {
+  const targets = restricted ? [...allowed] : [...presentGuildIds];
+
+  for (const guildId of targets) {
     try {
-      await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body });
+      await registerGuildCommands(rest, config.clientId, guildId, body);
       console.log(`Guild ${guildId}: /video, /help`);
     } catch (err) {
       console.warn(
@@ -48,16 +66,25 @@ async function registerCommands() {
     }
   }
 
-  // Clear commands on any other guild the bot somehow joined
-  for (const guildId of presentGuildIds) {
-    if (allowed.has(guildId)) continue;
-    try {
-      await rest.put(Routes.applicationGuildCommands(config.clientId, guildId), { body: [] });
-      console.log(`Guild ${guildId}: commands cleared (not allowlisted)`);
-    } catch (err) {
-      console.warn(`Guild ${guildId}: no se pudo limpiar comandos:`, err.message || err);
+  if (restricted) {
+    for (const guildId of presentGuildIds) {
+      if (allowed.has(guildId)) continue;
+      try {
+        await clearGuildCommands(rest, config.clientId, guildId);
+        console.log(`Guild ${guildId}: commands cleared (not allowlisted)`);
+      } catch (err) {
+        console.warn(`Guild ${guildId}: no se pudo limpiar comandos:`, err.message || err);
+      }
     }
   }
+}
+
+async function registerCommandsForGuild(guildId) {
+  const config = getConfig();
+  if (!config.token || !config.clientId || !guildId) return;
+  const rest = createRest(config.token);
+  await registerGuildCommands(rest, config.clientId, String(guildId));
+  console.log(`Guild ${guildId}: /video, /help`);
 }
 
 if (require.main === module) {
@@ -67,4 +94,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { registerCommands };
+module.exports = { registerCommands, registerCommandsForGuild };

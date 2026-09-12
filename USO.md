@@ -35,7 +35,7 @@ Vale para YouTube, X, Reddit, TikTok e Instagram.
 
 - Máximo **10 minutos** de duración (antes de descargar)
 - Archivo final por debajo de **10 MB**
-- Solo funciona en los servidores autorizados del bot
+- Solo funciona en los servidores autorizados del bot (si hay allowlist; si `DISCORD_ALLOWED_GUILD_IDS` está vacío, en cualquiera)
 - Si hay otro `/video` en marcha, el tuyo espera **en cola**
 
 ## Notas

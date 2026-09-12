@@ -39,7 +39,7 @@ Firma / autoría del producto: **by Wanikoko**.
 
 ## Principios no negociables
 
-1. **Allowlist de guilds** — Sin `DISCORD_ALLOWED_GUILD_IDS` no arranca; guilds ajenos → leave.
+1. **Allowlist de guilds (opcional)** — Si `DISCORD_ALLOWED_GUILD_IDS` tiene IDs, solo esos servidores; si está vacío, cualquier guild. Con allowlist activa, guilds ajenos → leave.
 2. **Duración pre-download** — Rechazar videos largos antes de bajarlos.
 3. **Tope de tamaño** — El adjunto debe caber en el límite Discord (`MAX_FILE_SIZE_MB`, defecto 10).
 4. **Providers aislados** — No meter lógica de plataforma en `downloader.js` / `compressor.js` / comandos.
@@ -182,7 +182,7 @@ Leídas en `getConfig()`:
 |-----|-----|
 | `DISCORD_BOT_TOKEN` | Login |
 | `DISCORD_CLIENT_ID` | Registro de commands |
-| `DISCORD_ALLOWED_GUILD_IDS` | Allowlist |
+| `DISCORD_ALLOWED_GUILD_IDS` | Allowlist opcional (vacío = todos) |
 | `MAX_DURATION_SECONDS` | Pre-check |
 | `MAX_FILE_SIZE_MB` | Cap encode + adjunto |
 | `TEMP_DIR` / `TEMP_MAX_AGE_HOURS` | Workspace + GC |

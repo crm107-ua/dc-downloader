@@ -2,7 +2,7 @@
 
 Bot de Discord que descarga videos cortos de **X**, **Reddit**, **YouTube**, **TikTok** e **Instagram**, los comprime bajo un límite estricto de tamaño y los publica en el mismo canal.
 
-Diseñado para ser **claro de usar**, **seguro** (solo servidores autorizados) y **fácil de extender** con nuevos proveedores.
+Diseñado para ser **claro de usar**, **configurable por servidor** (allowlist opcional) y **fácil de extender** con nuevos proveedores.
 
 ---
 
@@ -37,13 +37,13 @@ Diseñado para ser **claro de usar**, **seguro** (solo servidores autorizados) y
 | Calidad | Opción `calidad`: `auto` (defecto) · `alta` · `rapida` |
 | Concurrencia | Cola global: un job activo; el resto espera con posición visible |
 | Salida | Solo el archivo MP4 en el canal |
-| Acceso | Solo guilds listados en `DISCORD_ALLOWED_GUILD_IDS` |
+| Acceso | Opcional: limitar a guilds en `DISCORD_ALLOWED_GUILD_IDS` (vacío = todos) |
 
 ---
 
 ## Primeros pasos
 
-1. Copia `.env.example` → `.env` y rellena token, client ID y guilds permitidos.
+1. Copia `.env.example` → `.env` y rellena token y client ID. Opcionalmente define `DISCORD_ALLOWED_GUILD_IDS` para limitar servidores.
 2. Instala **Node.js ≥ 20**, **FFmpeg** y **yt-dlp** (en `PATH`).
 3. Instala dependencias y registra comandos:
 
@@ -214,7 +214,7 @@ npm start
 https://discord.com/api/oauth2/authorize?client_id=TU_CLIENT_ID&permissions=2147485696&scope=bot%20applications.commands
 ```
 
-El bot registra slash commands **solo** en los guilds de la allowlist (no globales). Ver [Alcance por servidor](#alcance-por-servidor).
+Los slash commands se registran por guild (no globales). El alcance puede limitarse con `DISCORD_ALLOWED_GUILD_IDS`. Ver [Alcance por servidor](#alcance-por-servidor).
 
 ---
 
@@ -224,7 +224,7 @@ El bot registra slash commands **solo** en los guilds de la allowlist (no global
 |----------|-------------|-------------|---------|
 | `DISCORD_BOT_TOKEN` | Sí | Token del bot | — |
 | `DISCORD_CLIENT_ID` | Sí | Application ID | — |
-| `DISCORD_ALLOWED_GUILD_IDS` | Sí | IDs de servidores donde el bot puede operar (lista separada por comas) | — |
+| `DISCORD_ALLOWED_GUILD_IDS` | No | IDs de servidores permitidos (coma-separados). Vacío = cualquier servidor | *(vacío)* |
 | `MAX_DURATION_SECONDS` | No | Duración máxima pre-descarga | `600` |
 | `MAX_FILE_SIZE_MB` | No | Tope del MP4 enviado | `10` |
 | `TEMP_DIR` | No | Workspace temporal | `./temp` |
@@ -236,13 +236,26 @@ Plantilla: [`.env.example`](.env.example). **No** commits de `.env`.
 
 ### Alcance por servidor
 
-El uso del bot se limita a los servidores indicados en `DISCORD_ALLOWED_GUILD_IDS`. Es una lista de snowflake IDs de Discord, separados por coma:
+`DISCORD_ALLOWED_GUILD_IDS` controla en qué servidores puede usarse el bot:
+
+| Valor | Comportamiento |
+|-------|----------------|
+| Vacío / no definido | Sin restricción: el bot opera en cualquier servidor al que esté invitado |
+| Lista de IDs | Solo esos guilds; en el resto no responde y abandona el servidor |
+
+Ejemplo con allowlist:
 
 ```env
 DISCORD_ALLOWED_GUILD_IDS=1119618150053466152,538027285580873728
 ```
 
-Al arrancar, el proceso registra `/video` y `/help` en esos guilds y deja constancia en log (`Servidores permitidos: …`). Si el bot está presente en un servidor que no figura en la lista, lo abandona. Sin esta variable el proceso no inicia.
+Ejemplo sin restricción:
+
+```env
+DISCORD_ALLOWED_GUILD_IDS=
+```
+
+Al arrancar, el log indica el modo (`Servidores permitidos: …` o `todos`). Los slash commands se registran por guild (no globales): con allowlist, solo en esos IDs; sin ella, en todos los servidores donde el bot esté presente (y también al unirse a uno nuevo).
 
 ---
 
@@ -325,7 +338,7 @@ dc-downloader/
 
 | Síntoma | Qué revisar |
 |---------|-------------|
-| Bot no responde | Guild en allowlist; token; `pm2 logs` |
+| Bot no responde | Allowlist (si está activa); token; `pm2 logs` |
 | “Plataforma no soportada” | Host no registrado; tipografía del enlace |
 | Reddit/X/Instagram piden auth | `COOKIES_FILE` o `COOKIES_FROM_BROWSER` |
 | YouTube 403 / JSON raro | Actualizar yt-dlp; revisar `extraArgs` del provider |

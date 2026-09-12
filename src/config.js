@@ -48,8 +48,13 @@ function getConfig() {
 function isGuildAllowed(guildId, config = getConfig()) {
   if (!guildId) return false;
   const allowed = config.allowedGuildIds || [];
-  if (!allowed.length) return false;
+  // Empty allowlist = unrestricted (any guild the bot is in)
+  if (!allowed.length) return true;
   return allowed.includes(String(guildId));
+}
+
+function isGuildAllowlistEnabled(config = getConfig()) {
+  return (config.allowedGuildIds || []).length > 0;
 }
 
 function parseAllowedUrl(raw) {
@@ -83,6 +88,7 @@ function detectPlatform(urlString) {
 module.exports = {
   getConfig,
   isGuildAllowed,
+  isGuildAllowlistEnabled,
   parseAllowedUrl,
   detectPlatform,
   allHosts,
