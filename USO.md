@@ -29,7 +29,7 @@ Vale para YouTube, X, Reddit, TikTok e Instagram.
 - Reddit
 - YouTube
 - TikTok (sin marca de agua cuando la API lo permite)
-- Instagram (reels y posts con video)
+- Instagram (reels, posts con video y carruseles: solo el primer vídeo)
 
 ## Límites
 

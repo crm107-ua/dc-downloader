@@ -330,7 +330,7 @@ dc-downloader/
 | **Reddit** | `reddit.com`, `old.reddit.com` | `FAST_FORMAT` | Opcional (`COOKIES_*`) en posts con muro de edad/login | Sin `normalizeUrl` ni `extraArgs` propios |
 | **YouTube** | `youtube.com`, `youtu.be`, `youtube-nocookie.com` (watch, Shorts, embed, live) | `YOUTUBE_FORMAT` (≤1080p / 60 fps, AVC+M4A) | Opcional (`COOKIES_*`) en contenido con restricción de edad | `normalizeUrl` unifica a `watch?v=`; `extraArgs` usa clients `android,ios,web` |
 | **TikTok** | `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com` | Prefer `play_addr` / `h264_*` / `bytevc1_*`; evita el fallback watermarked `download` | No requerida en el flujo habitual | `normalizeUrl` limpia query; `extraArgs` usa `--impersonate chrome`; `analyzeMeta` detecta watermark |
-| **Instagram** | `instagram.com`, `instagr.am` (`/reel/`, `/p/`, `/tv/`, `/share/`) | `FAST_FORMAT` | Opcional (`COOKIES_*`) si la API exige sesión | `normalizeUrl` conserva el id del media y elimina query de tracking (`utm_*`, `stkn`, …) |
+| **Instagram** | `instagram.com`, `instagr.am` (`/reel/`, `/p/`, `/tv/`, `/share/`) | `FAST_FORMAT` | Opcional (`COOKIES_*`) si la API exige sesión | `normalizeUrl` limpia tracking; en carruseles `/p/` solo descarga el **primer vídeo** (ignora fotos) |
 
 ---
 

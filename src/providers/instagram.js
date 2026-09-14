@@ -58,8 +58,21 @@ const provider = {
   formatSelector() {
     return FAST_FORMAT;
   },
+  /**
+   * Instagram sidecars (/p/ carousels) are playlists of mixed photo+video items.
+   * --no-playlist is ignored by the extractor for those posts, so without filters
+   * yt-dlp walks every slide and dies on "No video formats found" for photos.
+   * Keep only video slides and stop after the first one.
+   */
   extraArgs() {
-    return [];
+    return [
+      '--yes-playlist',
+      '--match-filters',
+      'vcodec!=none',
+      '--max-downloads',
+      '1',
+      '--ignore-no-formats-error',
+    ];
   },
 };
 

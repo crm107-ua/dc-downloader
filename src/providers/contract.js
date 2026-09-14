@@ -9,6 +9,7 @@
  *   formatSelector()  string for yt-dlp -f
  *   extraArgs()       string[] extra yt-dlp CLI args (extractor-args, etc.)
  *   analyzeMeta(meta) optional — returns { hadWatermarkOnly?: boolean, ... }
+ *   normalizeUrl(url) optional — clean tracking params / canonicalize path
  *
  * Register new providers in ./index.js only. Do not hardcode platforms in the pipeline.
  */

@@ -132,6 +132,7 @@ InteractionCreate (/video)
 | Cookies | `.env` `COOKIES_*` | Meter cookies en código |
 | Cola / paralelismo | `jobQueue.js` | Quitar enqueue de `video.js` |
 | YouTube URL weird | `providers/youtube.js` `normalizeUrl` | Truncar stdout a mano |
+| Instagram carrusel | `providers/instagram.js` `extraArgs` (primer vídeo) | Meter lógica de sidecar en downloader |
 
 ---
 

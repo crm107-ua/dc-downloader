@@ -42,6 +42,10 @@ const FIXTURES = [
     name: 'instagram-3',
     url: 'https://www.instagram.com/reel/DZ8A-ziuOqA/?utm_source=ig_web_copy_link&stkn=NTc4MTIwNjQ2YQ==',
   },
+  {
+    name: 'instagram-carousel',
+    url: 'https://www.instagram.com/p/DdRqAiEjMeb/?utm_source=ig_web_copy_link&stkn=NTc4MTIwNjQ2YQ',
+  },
 ];
 
 function mb(bytes) {

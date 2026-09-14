@@ -72,8 +72,9 @@ function run(command, args, options = {}) {
     });
 
     child.on('close', (code) => {
-      if (code === 0) {
-        finish(resolve, { stdout, stderr });
+      // yt-dlp exits 101 when --max-downloads is reached (intentional stop).
+      if (code === 0 || (command === 'yt-dlp' && code === 101)) {
+        finish(resolve, { stdout, stderr, code });
       } else {
         const detail = (stderr || stdout || '').trim().slice(-2000);
         finish(
