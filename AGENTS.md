@@ -105,14 +105,15 @@ InteractionCreate (/video)
   → allowlist guild
   → parseAllowedUrl + resolveProvider
   → deferReply
+  → (Instagram) listMediaChoices → si carrusel, Select Menu 1..N (vídeo/foto)
   → createProgressReporter
-  → jobQueue.enqueue(() => downloadAndPrepare(...))
+  → jobQueue.enqueue(() => downloadAndPrepare(... playlistItem/mediaKind))
        → onQueued → UI "En cola" si position > 0
        → onStart  → metadata
-       → fetchMetadata (yt-dlp) → assertDuration
-       → downloadRaw (yt-dlp -f provider)
-       → compressToLimit (FFmpeg, qualityMode)
-  → editReply({ files: [mp4] })
+       → fetchMetadata (yt-dlp) → assertDuration  (omitido en fotos)
+       → downloadRaw (yt-dlp -f provider | thumbnail si foto)
+       → compressToLimit (FFmpeg)  (omitido en fotos)
+  → deleteReply + channel.send({ files: [media] })
   → cleanup jobDir
 ```
 
@@ -132,7 +133,7 @@ InteractionCreate (/video)
 | Cookies | `.env` `COOKIES_*` | Meter cookies en código |
 | Cola / paralelismo | `jobQueue.js` | Quitar enqueue de `video.js` |
 | YouTube URL weird | `providers/youtube.js` `normalizeUrl` | Truncar stdout a mano |
-| Instagram carrusel | `providers/instagram.js` `extraArgs` (primer vídeo) | Meter lógica de sidecar en downloader |
+| Instagram carrusel | `providers/instagram.js` `listMediaChoices` + UI en `commands/video.js` | Forzar siempre el primer ítem en downloader |
 
 ---
 

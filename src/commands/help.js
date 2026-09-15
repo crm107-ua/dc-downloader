@@ -24,6 +24,7 @@ async function execute(interaction) {
         name: 'Comandos',
         value: [
           '`/video url:<enlace> [calidad]` — descarga y envía el video',
+          'En carruseles de Instagram te pide qué elemento (1, 2, 3…) quieres',
           '`/help` — muestra esta ayuda',
         ].join('\n'),
       },

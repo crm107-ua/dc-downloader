@@ -43,8 +43,16 @@ const FIXTURES = [
     url: 'https://www.instagram.com/reel/DZ8A-ziuOqA/?utm_source=ig_web_copy_link&stkn=NTc4MTIwNjQ2YQ==',
   },
   {
-    name: 'instagram-carousel',
+    name: 'instagram-carousel-video',
     url: 'https://www.instagram.com/p/DdRqAiEjMeb/?utm_source=ig_web_copy_link&stkn=NTc4MTIwNjQ2YQ',
+    playlistItem: 1,
+    mediaKind: 'video',
+  },
+  {
+    name: 'instagram-carousel-photo',
+    url: 'https://www.instagram.com/p/DdRqAiEjMeb/?utm_source=ig_web_copy_link&stkn=NTc4MTIwNjQ2YQ',
+    playlistItem: 2,
+    mediaKind: 'photo',
   },
 ];
 
@@ -57,14 +65,23 @@ async function testOne(fixture) {
   console.log(`\n=== ${fixture.name.toUpperCase()} ===`);
   console.log(fixture.url);
 
-  const result = await downloadAndPrepare(fixture.url);
+  const result = await downloadAndPrepare(fixture.url, {
+    playlistItem: fixture.playlistItem,
+    mediaKind: fixture.mediaKind,
+  });
   const okSize = result.sizeBytes <= config.maxFileSizeBytes;
-  const okDuration = result.durationSeconds <= config.maxDurationSeconds;
+  const okDuration =
+    result.mediaType === 'image' || result.durationSeconds <= config.maxDurationSeconds;
 
   console.log(`title: ${result.title}`);
   console.log(`platform: ${result.platform}`);
-  console.log(`duration: ${result.durationSeconds.toFixed(1)}s (limit ${config.maxDurationSeconds}s) ${okDuration ? 'OK' : 'FAIL'}`);
-  console.log(`size: ${mb(result.sizeBytes)} MB (limit ${config.maxFileSizeMb} MB) ${okSize ? 'OK' : 'FAIL'}`);
+  console.log(`mediaType: ${result.mediaType || 'video'}`);
+  if (result.mediaType === 'image') {
+    console.log(`size: ${mb(result.sizeBytes)} MB (limit ${config.maxFileSizeMb} MB) ${okSize ? 'OK' : 'FAIL'}`);
+  } else {
+    console.log(`duration: ${result.durationSeconds.toFixed(1)}s (limit ${config.maxDurationSeconds}s) ${okDuration ? 'OK' : 'FAIL'}`);
+    console.log(`size: ${mb(result.sizeBytes)} MB (limit ${config.maxFileSizeMb} MB) ${okSize ? 'OK' : 'FAIL'}`);
+  }
   if (fixture.name === 'tiktok') {
     console.log(
       `watermark: ${result.hadWatermarkOnly ? 'ONLY watermarked formats available' : 'preferred non-watermark stream'}`
@@ -74,7 +91,8 @@ async function testOne(fixture) {
   // Keep a copy for manual inspection
   const outDir = path.resolve('temp', 'test-out');
   fs.mkdirSync(outDir, { recursive: true });
-  const dest = path.join(outDir, `${fixture.name}.mp4`);
+  const ext = result.mediaType === 'image' ? path.extname(result.filePath) || '.jpg' : '.mp4';
+  const dest = path.join(outDir, `${fixture.name}${ext}`);
   fs.copyFileSync(result.filePath, dest);
   console.log(`saved: ${dest}`);
 
@@ -84,7 +102,13 @@ async function testOne(fixture) {
     throw new Error(`${fixture.name} failed size/duration checks`);
   }
 
-  return { name: fixture.name, sizeBytes: result.sizeBytes, durationSeconds: result.durationSeconds, dest };
+  return {
+    name: fixture.name,
+    sizeBytes: result.sizeBytes,
+    durationSeconds: result.durationSeconds,
+    mediaType: result.mediaType || 'video',
+    dest,
+  };
 }
 
 async function main() {
@@ -111,7 +135,9 @@ async function main() {
 
   console.log('\n=== SUMMARY ===');
   for (const r of results) {
-    console.log(`OK  ${r.name}: ${mb(r.sizeBytes)} MB, ${r.durationSeconds.toFixed(1)}s -> ${r.dest}`);
+    const dur =
+      r.mediaType === 'image' ? 'image' : `${Number(r.durationSeconds || 0).toFixed(1)}s`;
+    console.log(`OK  ${r.name}: ${mb(r.sizeBytes)} MB, ${dur} -> ${r.dest}`);
   }
   for (const f of failures) {
     console.log(`ERR ${f.name}: ${f.error}`);

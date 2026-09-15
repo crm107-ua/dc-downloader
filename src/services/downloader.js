@@ -28,9 +28,9 @@ function cookiesArgs(config) {
   return args;
 }
 
-function providerExtraArgs(provider) {
+function providerExtraArgs(provider, options = {}) {
   if (!provider || typeof provider.extraArgs !== 'function') return [];
-  const args = provider.extraArgs();
+  const args = provider.extraArgs(options);
   return Array.isArray(args) ? args : [];
 }
 
@@ -92,7 +92,23 @@ function parseDumpJson(stdout) {
   return JSON.parse(lines[lines.length - 1]);
 }
 
-async function fetchMetadata(url, config, provider) {
+/**
+ * Ask the provider (if it supports it) whether this URL is a multi-item carousel.
+ */
+async function listMediaChoices(url) {
+  const config = getConfig();
+  const provider = resolveProviderByUrl(url);
+  if (!provider || typeof provider.listMediaChoices !== 'function') {
+    return null;
+  }
+  const resolvedUrl = normalizeUrl(url, provider);
+  return provider.listMediaChoices(resolvedUrl, {
+    run,
+    cookiesArgs: cookiesArgs(config),
+  });
+}
+
+async function fetchMetadata(url, config, provider, downloadOptions = {}) {
   // Light metadata first — avoids multi‑MB dump-json parse issues on YouTube
   const printArgs = [
     '--no-playlist',
@@ -100,7 +116,7 @@ async function fetchMetadata(url, config, provider) {
     '--skip-download',
     '--print',
     '%(.{id,title,duration,webpage_url})j',
-    ...providerExtraArgs(provider),
+    ...providerExtraArgs(provider, downloadOptions),
     ...cookiesArgs(config),
     url,
   ];
@@ -119,7 +135,7 @@ async function fetchMetadata(url, config, provider) {
     '--dump-json',
     '--no-playlist',
     '--no-warnings',
-    ...providerExtraArgs(provider),
+    ...providerExtraArgs(provider, downloadOptions),
     ...cookiesArgs(config),
     url,
   ];
@@ -141,7 +157,8 @@ function assertDuration(meta, maxDurationSeconds) {
   return duration;
 }
 
-async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent, durationSeconds = null) {
+async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent, durationSeconds = null, downloadOptions = {}) {
+  const isPhoto = downloadOptions.mediaKind === 'photo';
   const args = [
     '--no-playlist',
     '--no-warnings',
@@ -149,16 +166,19 @@ async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent
     '--progress',
     '--no-write-subs',
     '--no-write-auto-subs',
-    ...providerExtraArgs(provider),
-    '-f',
-    providerFormatSelector(provider, durationSeconds),
-    '-o',
-    outTemplate,
-    '--merge-output-format',
-    'mp4',
-    ...cookiesArgs(config),
-    url,
+    ...providerExtraArgs(provider, downloadOptions),
   ];
+
+  if (!isPhoto) {
+    args.push(
+      '-f',
+      providerFormatSelector(provider, durationSeconds),
+      '--merge-output-format',
+      'mp4'
+    );
+  }
+
+  args.push('-o', outTemplate, ...cookiesArgs(config), url);
 
   let buffer = '';
   await run('yt-dlp', args, {
@@ -184,14 +204,23 @@ function findDownloadedFile(jobDir, jobId) {
   const entries = fs.readdirSync(jobDir);
   const match = entries.find((name) => name.startsWith(jobId) && !name.endsWith('.json'));
   if (!match) {
-    throw new Error('yt-dlp no produjo un archivo de video.');
+    throw new Error('yt-dlp no produjo un archivo descargable.');
   }
   return path.join(jobDir, match);
 }
 
+function isImagePath(filePath) {
+  return /\.(jpe?g|png|webp|gif)$/i.test(filePath);
+}
+
 /**
  * @param {string} url
- * @param {{ onProgress?: (percent: number, stage: string) => void | Promise<void>, qualityMode?: string }} [options]
+ * @param {{
+ *   onProgress?: (percent: number, stage: string) => void | Promise<void>,
+ *   qualityMode?: string,
+ *   playlistItem?: number,
+ *   mediaKind?: 'video'|'photo',
+ * }} [options]
  */
 async function downloadAndPrepare(url, options = {}) {
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : async () => {};
@@ -204,6 +233,10 @@ async function downloadAndPrepare(url, options = {}) {
   // Default auto for every provider unless the user picks calidad
   const qualityMode = normalizeQualityMode(options.qualityMode || 'auto');
   const resolvedUrl = normalizeUrl(url, provider);
+  const downloadOptions = {
+    playlistItem: options.playlistItem,
+    mediaKind: options.mediaKind === 'photo' ? 'photo' : 'video',
+  };
   const tempRoot = ensureTempDir(config.tempDir);
 
   scheduleTempCleanup();
@@ -225,24 +258,69 @@ async function downloadAndPrepare(url, options = {}) {
     console.log(`[${platform}] checking duration before download (max ${config.maxDurationSeconds}s)...`);
     console.log(`[${platform}] url=${resolvedUrl}`);
     console.log(`[${platform}] qualityMode=${qualityMode}`);
-    const meta = await fetchMetadata(resolvedUrl, config, provider);
-    const preDuration = assertDuration(meta, config.maxDurationSeconds);
-    if (preDuration != null) {
-      console.log(`[${platform}] duration OK pre-download: ${preDuration}s`);
+    if (downloadOptions.playlistItem) {
+      console.log(
+        `[${platform}] carousel item=${downloadOptions.playlistItem} kind=${downloadOptions.mediaKind}`
+      );
+    }
+
+    let meta = { title: 'media', id: jobId };
+    let preDuration = null;
+
+    if (downloadOptions.mediaKind !== 'photo') {
+      meta = await fetchMetadata(resolvedUrl, config, provider, downloadOptions);
+      preDuration = assertDuration(meta, config.maxDurationSeconds);
+      if (preDuration != null) {
+        console.log(`[${platform}] duration OK pre-download: ${preDuration}s`);
+      } else {
+        console.log(`[${platform}] duration missing in metadata; will verify after download`);
+      }
     } else {
-      console.log(`[${platform}] duration missing in metadata; will verify after download`);
+      console.log(`[${platform}] photo item — skipping video duration check`);
     }
     await onProgress(8, 'metadata');
 
     const outTemplate = path.join(jobDir, `${jobId}.%(ext)s`);
     console.log(`[${platform}] downloading...`);
     await onProgress(8, 'download');
-    await downloadRaw(resolvedUrl, provider, outTemplate, config, (dlPct) => {
-      onProgress(mapRange(dlPct, 8, 72), 'download');
-    }, preDuration);
+    await downloadRaw(
+      resolvedUrl,
+      provider,
+      outTemplate,
+      config,
+      (dlPct) => {
+        onProgress(mapRange(dlPct, 8, 72), 'download');
+      },
+      preDuration,
+      downloadOptions
+    );
     await onProgress(72, 'download');
 
     const rawPath = findDownloadedFile(jobDir, jobId);
+
+    // Photo / image path: no FFmpeg compress, just size-check and return
+    if (downloadOptions.mediaKind === 'photo' || isImagePath(rawPath)) {
+      const sizeBytes = fs.statSync(rawPath).size;
+      if (sizeBytes > config.maxFileSizeBytes) {
+        throw new Error(
+          `La imagen pesa ${(sizeBytes / 1024 / 1024).toFixed(1)} MB y el máximo es ${config.maxFileSizeMb} MB.`
+        );
+      }
+      await onProgress(95, 'compress');
+      return {
+        filePath: rawPath,
+        title: meta.title || meta.id || 'foto',
+        platform,
+        providerLabel: provider.label,
+        qualityMode,
+        mediaType: 'image',
+        sizeBytes,
+        durationSeconds: 0,
+        hadWatermarkOnly: false,
+        cleanup,
+      };
+    }
+
     const probed = await probeDuration(rawPath);
     if (probed > config.maxDurationSeconds) {
       const mins = Math.floor(config.maxDurationSeconds / 60);
@@ -273,6 +351,7 @@ async function downloadAndPrepare(url, options = {}) {
       platform,
       providerLabel: provider.label,
       qualityMode,
+      mediaType: 'video',
       sizeBytes: compressed.sizeBytes,
       durationSeconds: compressed.durationSeconds,
       hadWatermarkOnly: Boolean(analysis.hadWatermarkOnly),
@@ -287,6 +366,7 @@ async function downloadAndPrepare(url, options = {}) {
 module.exports = {
   downloadAndPrepare,
   fetchMetadata,
+  listMediaChoices,
   providerFormatSelector,
   parseDumpJson,
   normalizeUrl,

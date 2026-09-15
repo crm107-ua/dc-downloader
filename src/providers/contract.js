@@ -7,9 +7,11 @@
  *   hosts          string[] exact hostnames accepted (lowercase)
  *   matches(host)  optional (host) => boolean — if omitted, hosts.includes is used
  *   formatSelector()  string for yt-dlp -f
- *   extraArgs()       string[] extra yt-dlp CLI args (extractor-args, etc.)
+ *   extraArgs(opts)   string[] extra yt-dlp CLI args; opts may include playlistItem/mediaKind
  *   analyzeMeta(meta) optional — returns { hadWatermarkOnly?: boolean, ... }
  *   normalizeUrl(url) optional — clean tracking params / canonicalize path
+ *   listMediaChoices(url, ctx) optional async — detect carousels / multi-item posts
+ *                     returns { isCarousel, title?, items: [{ index, id, kind, label }] }
  *
  * Register new providers in ./index.js only. Do not hardcode platforms in the pipeline.
  */
