@@ -80,7 +80,6 @@ async function promptCarouselChoice(interaction, choices) {
     );
 
   const message = await interaction.editReply({
-    content: null,
     embeds: [embed],
     components: [row],
   });
@@ -114,7 +113,7 @@ async function promptCarouselChoice(interaction, choices) {
   }
 
   await interaction.editReply({
-    content: null,
+    content: `Elemento **${playlistItem}** (${mediaKind === 'photo' ? 'foto' : 'vídeo'}) seleccionado. Preparando descarga…`,
     embeds: [],
     components: [],
   });
@@ -152,7 +151,7 @@ async function execute(interaction) {
     } catch (err) {
       const message = err && err.message ? err.message : 'No se pudo analizar el carrusel.';
       await interaction.editReply({
-        content: `No se pudo analizar el enlace:\n\`\`\`${message.slice(0, 1500)}\`\`\``,
+        content: `No se pudo preparar el carrusel:\n\`\`\`${message.slice(0, 1500)}\`\`\``,
         embeds: [],
         components: [],
       });
