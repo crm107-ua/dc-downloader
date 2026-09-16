@@ -134,6 +134,7 @@ InteractionCreate (/video)
 | Cola / paralelismo | `jobQueue.js` | Quitar enqueue de `video.js` |
 | YouTube URL weird | `providers/youtube.js` `normalizeUrl` | Truncar stdout a mano |
 | Instagram carrusel | `providers/instagram.js` `listMediaChoices` + UI en `commands/video.js` | Forzar siempre el primer ítem en downloader |
+| TikTok restringido / login wall | `providers/tiktok.js` `fetchFallbackMedia` (yt-dlp primero) | Cookies obligatorias en Discord o mensajes de `.env` al usuario |
 
 ---
 

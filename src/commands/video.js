@@ -12,6 +12,7 @@ const { downloadAndPrepare, listMediaChoices } = require('../services/downloader
 const { enqueue } = require('../services/jobQueue');
 const { createProgressReporter } = require('../utils/progress');
 const { normalizeQualityMode } = require('../services/compressor');
+const { formatDownloadError } = require('../utils/downloadError');
 
 const CAROUSEL_TIMEOUT_MS = 120000;
 
@@ -188,14 +189,9 @@ async function execute(interaction) {
     );
   } catch (err) {
     await progress.close();
-    let message = err && err.message ? err.message : 'Error desconocido al descargar.';
-    if (/authentication is required|cookies/i.test(message)) {
-      message =
-        'Esta URL requiere cookies (típico en Reddit/Instagram). Configura COOKIES_FILE o COOKIES_FROM_BROWSER en .env.\n' +
-        message;
-    }
+    const message = formatDownloadError(err && err.message ? err.message : err);
     await interaction.editReply({
-      content: `No se pudo descargar el media:\n\`\`\`${message.slice(0, 1500)}\`\`\``,
+      content: `No se pudo descargar el media:\n\`\`\`${message}\`\`\``,
       embeds: [],
       components: [],
     });

@@ -31,6 +31,10 @@ const FIXTURES = [
     url: 'https://www.tiktok.com/@closepop/video/7653496247508028694?is_from_webapp=1&sender_device=pc',
   },
   {
+    name: 'tiktok-restricted',
+    url: 'https://vm.tiktok.com/ZGdQfwNaq/',
+  },
+  {
     name: 'instagram',
     url: 'https://www.instagram.com/reel/DdIKGyXyo6z/?stkn=MTU3ZXJwM2licnZuag==',
   },

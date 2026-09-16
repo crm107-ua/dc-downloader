@@ -80,7 +80,48 @@ const provider = {
   },
   extraArgs() {
     // TikTok often needs browser TLS impersonation (curl_cffi on the host).
-    return ['--impersonate', 'chrome'];
+    // Try mobile app_info first, then webpage (yt-dlp default order when app_info is set).
+    return [
+      '--impersonate',
+      'chrome',
+      '--extractor-args',
+      'tiktok:app_info=1233/35.1.3/2023501030',
+    ];
+  },
+  /**
+   * When yt-dlp cannot access a clip (age gate, login wall, geo), resolve a direct CDN URL.
+   * No browser cookies required on the server.
+   */
+  async fetchFallbackMedia(pageUrl) {
+    const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(pageUrl)}`;
+    const res = await fetch(apiUrl, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Resolución alternativa de TikTok falló (HTTP ${res.status}).`);
+    }
+    const payload = await res.json();
+    if (!payload || payload.code !== 0 || !payload.data) {
+      const detail = (payload && payload.msg) || 'respuesta vacía';
+      throw new Error(`No se pudo resolver el vídeo de TikTok (${detail}).`);
+    }
+    const data = payload.data;
+    const directUrl = data.play || data.hdplay || data.wmplay;
+    if (!directUrl) {
+      throw new Error('No se encontró URL de vídeo para este TikTok.');
+    }
+    const duration = Number(data.duration);
+    return {
+      directUrl,
+      title: data.title || data.author?.nickname || data.author?.unique_id || 'tiktok',
+      id: data.id ? String(data.id) : undefined,
+      durationSeconds: Number.isFinite(duration) ? duration : null,
+      hadWatermarkOnly: !data.play && !data.hdplay && Boolean(data.wmplay),
+    };
   },
   analyzeMeta(meta) {
     const formats = Array.isArray(meta && meta.formats) ? meta.formats : [];

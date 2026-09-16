@@ -213,6 +213,109 @@ function isImagePath(filePath) {
   return /\.(jpe?g|png|webp|gif)$/i.test(filePath);
 }
 
+async function downloadDirectUrl(directUrl, destPath, onDownloadPercent) {
+  const res = await fetch(directUrl, { redirect: 'follow' });
+  if (!res.ok) {
+    throw new Error(`Descarga directa falló (HTTP ${res.status}).`);
+  }
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!buffer.length) {
+    throw new Error('La descarga directa no devolvió datos.');
+  }
+  fs.writeFileSync(destPath, buffer);
+  if (typeof onDownloadPercent === 'function') onDownloadPercent(100);
+}
+
+async function runYtdlpVideoPipeline({
+  resolvedUrl,
+  provider,
+  config,
+  downloadOptions,
+  qualityMode,
+  platform,
+  jobDir,
+  jobId,
+  onProgress,
+}) {
+  let meta = { title: 'media', id: jobId };
+  let preDuration = null;
+  let usedFallback = false;
+  let fallbackAnalysis = {};
+
+  if (downloadOptions.mediaKind !== 'photo') {
+    try {
+      meta = await fetchMetadata(resolvedUrl, config, provider, downloadOptions);
+      preDuration = assertDuration(meta, config.maxDurationSeconds);
+      if (preDuration != null) {
+        console.log(`[${platform}] duration OK pre-download: ${preDuration}s`);
+      } else {
+        console.log(`[${platform}] duration missing in metadata; will verify after download`);
+      }
+    } catch (err) {
+      if (typeof provider.fetchFallbackMedia !== 'function') throw err;
+      console.warn(`[${platform}] yt-dlp metadata failed, trying fallback: ${err.message || err}`);
+      const fb = await provider.fetchFallbackMedia(resolvedUrl);
+      if (fb.durationSeconds != null) {
+        assertDuration({ duration: fb.durationSeconds }, config.maxDurationSeconds);
+      }
+      meta = { title: fb.title, id: fb.id || jobId, duration: fb.durationSeconds };
+      preDuration = fb.durationSeconds;
+      usedFallback = fb;
+      fallbackAnalysis = { hadWatermarkOnly: Boolean(fb.hadWatermarkOnly) };
+    }
+  } else {
+    console.log(`[${platform}] photo item — skipping video duration check`);
+  }
+
+  await onProgress(8, 'metadata');
+
+  const outTemplate = path.join(jobDir, `${jobId}.%(ext)s`);
+  let rawPath;
+
+  console.log(`[${platform}] downloading...`);
+  await onProgress(8, 'download');
+
+  if (usedFallback && usedFallback.directUrl) {
+    rawPath = path.join(jobDir, `${jobId}.mp4`);
+    await downloadDirectUrl(usedFallback.directUrl, rawPath, (dlPct) => {
+      onProgress(mapRange(dlPct, 8, 72), 'download');
+    });
+  } else {
+    try {
+      await downloadRaw(
+        resolvedUrl,
+        provider,
+        outTemplate,
+        config,
+        (dlPct) => {
+          onProgress(mapRange(dlPct, 8, 72), 'download');
+        },
+        preDuration,
+        downloadOptions
+      );
+      rawPath = findDownloadedFile(jobDir, jobId);
+    } catch (err) {
+      if (typeof provider.fetchFallbackMedia !== 'function') throw err;
+      console.warn(`[${platform}] yt-dlp download failed, trying fallback: ${err.message || err}`);
+      const fb = await provider.fetchFallbackMedia(resolvedUrl);
+      if (fb.durationSeconds != null) {
+        assertDuration({ duration: fb.durationSeconds }, config.maxDurationSeconds);
+      }
+      meta = { title: fb.title, id: fb.id || meta.id || jobId, duration: fb.durationSeconds };
+      fallbackAnalysis = { hadWatermarkOnly: Boolean(fb.hadWatermarkOnly) };
+      rawPath = path.join(jobDir, `${jobId}.mp4`);
+      await downloadDirectUrl(fb.directUrl, rawPath, (dlPct) => {
+        onProgress(mapRange(dlPct, 8, 72), 'download');
+      });
+      usedFallback = fb;
+    }
+  }
+
+  await onProgress(72, 'download');
+
+  return { meta, rawPath, fallbackAnalysis, qualityMode };
+}
+
 /**
  * @param {string} url
  * @param {{
@@ -264,39 +367,18 @@ async function downloadAndPrepare(url, options = {}) {
       );
     }
 
-    let meta = { title: 'media', id: jobId };
-    let preDuration = null;
-
-    if (downloadOptions.mediaKind !== 'photo') {
-      meta = await fetchMetadata(resolvedUrl, config, provider, downloadOptions);
-      preDuration = assertDuration(meta, config.maxDurationSeconds);
-      if (preDuration != null) {
-        console.log(`[${platform}] duration OK pre-download: ${preDuration}s`);
-      } else {
-        console.log(`[${platform}] duration missing in metadata; will verify after download`);
-      }
-    } else {
-      console.log(`[${platform}] photo item — skipping video duration check`);
-    }
-    await onProgress(8, 'metadata');
-
-    const outTemplate = path.join(jobDir, `${jobId}.%(ext)s`);
-    console.log(`[${platform}] downloading...`);
-    await onProgress(8, 'download');
-    await downloadRaw(
+    const pipeline = await runYtdlpVideoPipeline({
       resolvedUrl,
       provider,
-      outTemplate,
       config,
-      (dlPct) => {
-        onProgress(mapRange(dlPct, 8, 72), 'download');
-      },
-      preDuration,
-      downloadOptions
-    );
-    await onProgress(72, 'download');
-
-    const rawPath = findDownloadedFile(jobDir, jobId);
+      downloadOptions,
+      qualityMode,
+      platform,
+      jobDir,
+      jobId,
+      onProgress,
+    });
+    const { meta, rawPath, fallbackAnalysis } = pipeline;
 
     // Photo / image path: no FFmpeg compress, just size-check and return
     if (downloadOptions.mediaKind === 'photo' || isImagePath(rawPath)) {
@@ -354,7 +436,9 @@ async function downloadAndPrepare(url, options = {}) {
       mediaType: 'video',
       sizeBytes: compressed.sizeBytes,
       durationSeconds: compressed.durationSeconds,
-      hadWatermarkOnly: Boolean(analysis.hadWatermarkOnly),
+      hadWatermarkOnly: Boolean(
+        fallbackAnalysis.hadWatermarkOnly || analysis.hadWatermarkOnly
+      ),
       cleanup,
     };
   } catch (err) {

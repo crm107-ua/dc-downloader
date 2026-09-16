@@ -12,6 +12,8 @@
  *   normalizeUrl(url) optional — clean tracking params / canonicalize path
  *   listMediaChoices(url, ctx) optional async — detect carousels / multi-item posts
  *                     returns { isCarousel, title?, items: [{ index, id, kind, label }] }
+ *   fetchFallbackMedia(url) optional async — direct CDN URL when yt-dlp cannot access the post
+ *                     returns { directUrl, title, id?, durationSeconds?, hadWatermarkOnly? }
  *
  * Register new providers in ./index.js only. Do not hardcode platforms in the pipeline.
  */
