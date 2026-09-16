@@ -213,8 +213,10 @@ function isImagePath(filePath) {
   return /\.(jpe?g|png|webp|gif)$/i.test(filePath);
 }
 
-async function downloadDirectUrl(directUrl, destPath, onDownloadPercent) {
-  const res = await fetch(directUrl, { redirect: 'follow' });
+async function downloadDirectUrl(directUrl, destPath, onDownloadPercent, requestHeaders = null) {
+  const headers =
+    requestHeaders && typeof requestHeaders === 'object' ? { ...requestHeaders } : undefined;
+  const res = await fetch(directUrl, { redirect: 'follow', headers });
   if (!res.ok) {
     throw new Error(`Descarga directa falló (HTTP ${res.status}).`);
   }
@@ -224,6 +226,24 @@ async function downloadDirectUrl(directUrl, destPath, onDownloadPercent) {
   }
   fs.writeFileSync(destPath, buffer);
   if (typeof onDownloadPercent === 'function') onDownloadPercent(100);
+}
+
+function fallbackDestPath(jobDir, jobId, fb) {
+  const kind = fb.mediaKind === 'image' || fb.mediaKind === 'photo' ? 'image' : 'video';
+  let ext = typeof fb.fileExt === 'string' ? fb.fileExt : '';
+  if (!ext) {
+    const fromUrl = /\.([a-z0-9]+)(?:\?|$)/i.exec(fb.directUrl || '');
+    ext = fromUrl ? `.${fromUrl[1].toLowerCase()}` : kind === 'image' ? '.jpg' : '.mp4';
+  }
+  if (!ext.startsWith('.')) ext = `.${ext}`;
+  return path.join(jobDir, `${jobId}${ext}`);
+}
+
+async function resolveFallbackMedia(provider, resolvedUrl) {
+  if (typeof provider.fetchFallbackMedia !== 'function') {
+    throw new Error('Provider sin fallback.');
+  }
+  return provider.fetchFallbackMedia(resolvedUrl, { run });
 }
 
 async function runYtdlpVideoPipeline({
@@ -254,7 +274,7 @@ async function runYtdlpVideoPipeline({
     } catch (err) {
       if (typeof provider.fetchFallbackMedia !== 'function') throw err;
       console.warn(`[${platform}] yt-dlp metadata failed, trying fallback: ${err.message || err}`);
-      const fb = await provider.fetchFallbackMedia(resolvedUrl);
+      const fb = await resolveFallbackMedia(provider, resolvedUrl);
       if (fb.durationSeconds != null) {
         assertDuration({ duration: fb.durationSeconds }, config.maxDurationSeconds);
       }
@@ -276,10 +296,15 @@ async function runYtdlpVideoPipeline({
   await onProgress(8, 'download');
 
   if (usedFallback && usedFallback.directUrl) {
-    rawPath = path.join(jobDir, `${jobId}.mp4`);
-    await downloadDirectUrl(usedFallback.directUrl, rawPath, (dlPct) => {
-      onProgress(mapRange(dlPct, 8, 72), 'download');
-    });
+    rawPath = fallbackDestPath(jobDir, jobId, usedFallback);
+    await downloadDirectUrl(
+      usedFallback.directUrl,
+      rawPath,
+      (dlPct) => {
+        onProgress(mapRange(dlPct, 8, 72), 'download');
+      },
+      usedFallback.requestHeaders || null
+    );
   } else {
     try {
       await downloadRaw(
@@ -297,23 +322,28 @@ async function runYtdlpVideoPipeline({
     } catch (err) {
       if (typeof provider.fetchFallbackMedia !== 'function') throw err;
       console.warn(`[${platform}] yt-dlp download failed, trying fallback: ${err.message || err}`);
-      const fb = await provider.fetchFallbackMedia(resolvedUrl);
+      const fb = await resolveFallbackMedia(provider, resolvedUrl);
       if (fb.durationSeconds != null) {
         assertDuration({ duration: fb.durationSeconds }, config.maxDurationSeconds);
       }
       meta = { title: fb.title, id: fb.id || meta.id || jobId, duration: fb.durationSeconds };
       fallbackAnalysis = { hadWatermarkOnly: Boolean(fb.hadWatermarkOnly) };
-      rawPath = path.join(jobDir, `${jobId}.mp4`);
-      await downloadDirectUrl(fb.directUrl, rawPath, (dlPct) => {
-        onProgress(mapRange(dlPct, 8, 72), 'download');
-      });
+      rawPath = fallbackDestPath(jobDir, jobId, fb);
+      await downloadDirectUrl(
+        fb.directUrl,
+        rawPath,
+        (dlPct) => {
+          onProgress(mapRange(dlPct, 8, 72), 'download');
+        },
+        fb.requestHeaders || null
+      );
       usedFallback = fb;
     }
   }
 
   await onProgress(72, 'download');
 
-  return { meta, rawPath, fallbackAnalysis, qualityMode };
+  return { meta, rawPath, fallbackAnalysis, qualityMode, usedFallback };
 }
 
 /**

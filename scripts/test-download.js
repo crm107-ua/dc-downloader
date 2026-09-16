@@ -15,6 +15,10 @@ const FIXTURES = [
     url: 'https://www.reddit.com/user/-ActiveMatter-/comments/1w5hm4k/armas_reales_f%C3%ADsica_imposible_un_shooter_de/',
   },
   {
+    name: 'reddit-gif-short',
+    url: 'https://www.reddit.com/r/projectzomboid/s/B9NLvBniBk',
+  },
+  {
     name: 'youtube',
     url: 'https://www.youtube.com/watch?v=AjSKT5ovuIs',
   },

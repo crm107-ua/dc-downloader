@@ -77,10 +77,13 @@ function run(command, args, options = {}) {
         finish(resolve, { stdout, stderr, code });
       } else {
         const detail = (stderr || stdout || '').trim().slice(-2000);
-        finish(
-          reject,
-          new Error(`${command} exited with code ${code}${detail ? `: ${detail}` : ''}`)
+        const err = new Error(
+          `${command} exited with code ${code}${detail ? `: ${detail}` : ''}`
         );
+        err.stderr = stderr;
+        err.stdout = stdout;
+        err.exitCode = code;
+        finish(reject, err);
       }
     });
   });

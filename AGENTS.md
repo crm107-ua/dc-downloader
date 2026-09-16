@@ -135,6 +135,7 @@ InteractionCreate (/video)
 | YouTube URL weird | `providers/youtube.js` `normalizeUrl` | Truncar stdout a mano |
 | Instagram carrusel | `providers/instagram.js` `listMediaChoices` + UI en `commands/video.js` | Forzar siempre el primer ítem en downloader |
 | TikTok restringido / login wall | `providers/tiktok.js` `fetchFallbackMedia` (yt-dlp primero) | Cookies obligatorias en Discord o mensajes de `.env` al usuario |
+| Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |
 
 ---
 

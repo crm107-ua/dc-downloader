@@ -27,6 +27,9 @@ function formatDownloadError(raw) {
   if (/comfortable for some audiences|Log in for access/i.test(msg)) {
     return 'TikTok no permite descargar este vídeo (contenido restringido o privado).';
   }
+  if (/HTTP Error 403:\s*Blocked|Unable to download webpage: HTTP Error 403/i.test(msg)) {
+    return 'El servidor de media bloqueó la descarga (403). Prueba de nuevo o con otro enlace.';
+  }
   if (/authentication is required|login required|Log into an account/i.test(msg)) {
     return 'El enlace requiere acceso con cuenta y no se puede descargar.';
   }
