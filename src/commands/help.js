@@ -59,7 +59,7 @@ async function execute(interaction) {
       }
     )
     .setFooter({
-      text: 'Si Reddit/X/Instagram fallan por login, configura COOKIES_FILE o COOKIES_FROM_BROWSER en .env',
+      text: 'TikTok e Instagram usan resolución alternativa sin cookies cuando hace falta · by Wanikoko',
     });
 
   await interaction.reply({ embeds: [embed], ephemeral: true });

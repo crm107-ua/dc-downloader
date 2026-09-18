@@ -66,7 +66,7 @@ src/
     contract.js            # Contrato + matchesHost helper
     index.js               # PROVIDERS[] — ÚNICO sitio para registrar
     formats.js             # Selectores -f compartidos
-    x.js | reddit.js | youtube.js | tiktok.js | instagram.js
+    x.js | reddit.js | youtube.js | tiktok.js | instagram.js | facebook.js
 
   services/
     downloader.js          # Pipeline: meta → download → compress → cleanup
@@ -134,7 +134,10 @@ InteractionCreate (/video)
 | Cola / paralelismo | `jobQueue.js` | Quitar enqueue de `video.js` |
 | YouTube URL weird | `providers/youtube.js` `normalizeUrl` | Truncar stdout a mano |
 | Instagram carrusel | `providers/instagram.js` `listMediaChoices` + UI en `commands/video.js` | Forzar siempre el primer ítem en downloader |
+| Instagram freeze / VP9 | `instagram.js` format `3/2/1` + `compressor` no hace `-c copy` de no-H.264 | Mezclar DASH VP9 con stream copy |
+| Instagram restringido / age gate | `providers/instagram.js` `fetchFallbackMedia` (progressive o resolver público) | Cookies obligatorias en Discord |
 | TikTok restringido / login wall | `providers/tiktok.js` `fetchFallbackMedia` (yt-dlp primero) | Cookies obligatorias en Discord o mensajes de `.env` al usuario |
+| Facebook reel / fb.watch | `providers/facebook.js` + registry | Meter lógica FB en downloader |
 | Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |
 
 ---

@@ -1,5 +1,10 @@
 const { matchesHost } = require('./contract');
-const { FAST_FORMAT } = require('./formats');
+
+/**
+ * Progressive formats 1/2/3 are H.264+AAC muxed MP4s.
+ * DASH (dash-*) is often VP9 — Discord clients freeze on stream-copy of VP9 in MP4.
+ */
+const INSTAGRAM_FORMAT = ['3', '2', '1', 'best[format_id!^=dash][vcodec!=none]', 'best'].join('/');
 
 function hasVideoFormats(entry) {
   const formats = Array.isArray(entry && entry.formats) ? entry.formats : [];
@@ -26,6 +31,75 @@ function parseDumpJsonLoose(stdout) {
     throw new Error('No se pudo parsear el carrusel de Instagram.');
   }
   return JSON.parse(text.slice(start, end + 1));
+}
+
+function unescapeJsString(s) {
+  return String(s || '')
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\\//g, '/')
+    .replace(/\\'/g, "'")
+    .replace(/\\"/g, '"');
+}
+
+function decodeJwtPayload(token) {
+  const parts = String(token || '').split('.');
+  if (parts.length < 2) return null;
+  try {
+    const json = Buffer.from(parts[1], 'base64url').toString('utf8');
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse downloadgram.org API HTML/JS blob into ranked CDN proxy URLs (mp4 first).
+ */
+function extractDownloadgramCandidates(raw) {
+  const html = unescapeJsString(raw);
+  const hrefs = [...html.matchAll(/href=["']([^"']+)["']/gi)].map((m) => m[1]);
+  const scored = [];
+  for (const href of hrefs) {
+    if (!/cdn\.downloadgram\.org\/\?token=/i.test(href)) continue;
+    let force = false;
+    let name = '';
+    try {
+      const token = new URL(href).searchParams.get('token');
+      const payload = decodeJwtPayload(token);
+      if (payload) {
+        force = Boolean(payload.force);
+        name = String(payload.filename || '');
+      }
+    } catch {
+      // ignore bad tokens
+    }
+    scored.push({ url: href, force, name });
+  }
+  scored.sort(
+    (a, b) =>
+      Number(b.force) - Number(a.force) ||
+      Number(/\.mp4$/i.test(b.name)) - Number(/\.mp4$/i.test(a.name))
+  );
+  return scored;
+}
+
+function pickProgressiveUrl(meta) {
+  const formats = Array.isArray(meta && meta.formats) ? meta.formats : [];
+  const preferred = ['3', '2', '1'];
+  for (const id of preferred) {
+    const hit = formats.find((f) => String(f.format_id) === id && f.url);
+    if (hit) return hit.url;
+  }
+  const nonDash = formats.find(
+    (f) =>
+      f &&
+      f.url &&
+      f.vcodec &&
+      f.vcodec !== 'none' &&
+      !String(f.format_id || '').startsWith('dash')
+  );
+  return nonDash ? nonDash.url : null;
 }
 
 const provider = {
@@ -83,22 +157,26 @@ const provider = {
     return u.toString();
   },
   formatSelector() {
-    return FAST_FORMAT;
+    return INSTAGRAM_FORMAT;
   },
   /**
    * @param {{ playlistItem?: number, mediaKind?: 'video'|'photo' }} [options]
    */
   extraArgs(options = {}) {
+    const args = [
+      '--extractor-args',
+      'instagram:include_dash=0',
+    ];
     const item = Number(options.playlistItem);
     if (!Number.isFinite(item) || item < 1) {
-      return [];
+      return args;
     }
-    const args = [
+    args.push(
       '--yes-playlist',
       '--playlist-items',
       String(Math.floor(item)),
-      '--ignore-no-formats-error',
-    ];
+      '--ignore-no-formats-error'
+    );
     if (options.mediaKind === 'photo') {
       args.push(
         '--write-thumbnail',
@@ -129,6 +207,8 @@ const provider = {
       '--ignore-no-formats-error',
       '--no-warnings',
       '--skip-download',
+      '--extractor-args',
+      'instagram:include_dash=0',
       ...cookieArgs,
       url,
     ];
@@ -171,7 +251,92 @@ const provider = {
       items,
     };
   },
+  /**
+   * When yt-dlp cannot access a post (Restricted Video / login wall / age gate),
+   * resolve a progressive H.264 URL without server cookies.
+   *
+   * @param {string} pageUrl
+   * @param {{ run?: Function }} [ctx]
+   */
+  async fetchFallbackMedia(pageUrl, ctx = {}) {
+    const run = ctx.run;
+
+    // 1) Prefer progressive CDN URL from yt-dlp metadata (no cookies).
+    if (typeof run === 'function') {
+      try {
+        const { stdout } = await run(
+          'yt-dlp',
+          [
+            '--dump-single-json',
+            '--no-warnings',
+            '--skip-download',
+            '--extractor-args',
+            'instagram:include_dash=0',
+            pageUrl,
+          ],
+          { timeoutMs: 120000 }
+        );
+        const meta = parseDumpJsonLoose(stdout);
+        const directUrl = pickProgressiveUrl(meta);
+        if (directUrl) {
+          const duration = Number(meta.duration);
+          return {
+            directUrl,
+            title: meta.title || meta.id || 'instagram',
+            id: meta.id ? String(meta.id) : undefined,
+            durationSeconds: Number.isFinite(duration) ? duration : null,
+            requestHeaders: {
+              Referer: 'https://www.instagram.com/',
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+          };
+        }
+      } catch {
+        // fall through to public resolver
+      }
+    }
+
+    // 2) Public resolver (works for many posts yt-dlp marks Restricted / login_required).
+    const res = await fetch('https://api.downloadgram.org/media', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: '*/*',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Origin: 'https://downloadgram.org',
+        Referer: 'https://downloadgram.org/',
+      },
+      body: JSON.stringify({ url: pageUrl }),
+    });
+    if (!res.ok) {
+      throw new Error(`Resolución alternativa de Instagram falló (HTTP ${res.status}).`);
+    }
+    const body = await res.text();
+    const candidates = extractDownloadgramCandidates(body);
+    const best = candidates.find((c) => c.force || /\.mp4$/i.test(c.name)) || candidates[0];
+    if (!best || !best.url) {
+      throw new Error('No se pudo resolver el vídeo de Instagram sin sesión.');
+    }
+
+    return {
+      directUrl: best.url,
+      title: 'instagram',
+      durationSeconds: null,
+      requestHeaders: {
+        Referer: 'https://downloadgram.org/',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+    };
+  },
 };
 
 module.exports = provider;
 module.exports.matchesHost = (host) => matchesHost(provider, host);
+module.exports._test = {
+  extractDownloadgramCandidates,
+  pickProgressiveUrl,
+  unescapeJsString,
+};

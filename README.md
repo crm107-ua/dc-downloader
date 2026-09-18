@@ -1,6 +1,6 @@
 # DC Downloader
 
-Bot de Discord que descarga videos cortos de **X**, **Reddit**, **YouTube**, **TikTok** e **Instagram**, los comprime bajo un límite estricto de tamaño y los publica en el mismo canal.
+Bot de Discord que descarga videos cortos de **X**, **Reddit**, **YouTube**, **TikTok**, **Instagram** y **Facebook**, los comprime bajo un límite estricto de tamaño y los publica en el mismo canal.
 
 Diseñado para ser **claro de usar**, **configurable por servidor** (allowlist opcional) y **fácil de extender** con nuevos proveedores.
 
@@ -229,7 +229,7 @@ Los slash commands se registran por guild (no globales). El alcance puede limita
 | `MAX_FILE_SIZE_MB` | No | Tope del MP4 enviado | `10` |
 | `TEMP_DIR` | No | Workspace temporal | `./temp` |
 | `TEMP_MAX_AGE_HOURS` | No | Edad máxima de residuos | `24` |
-| `COOKIES_FILE` | No | Cookies Netscape (X/Reddit/Instagram/edad) | — |
+| `COOKIES_FILE` | No | Cookies Netscape (opcional, X/Reddit/YouTube edad) | — |
 | `COOKIES_FROM_BROWSER` | No | p. ej. `chrome`, `edge`, `firefox` | — |
 
 Plantilla: [`.env.example`](.env.example). **No** commits de `.env`.
@@ -310,7 +310,7 @@ dc-downloader/
     │   ├── contract.js
     │   ├── index.js          # Registry
     │   ├── formats.js
-    │   ├── x.js | reddit.js | youtube.js | tiktok.js | instagram.js
+    │   ├── x.js | reddit.js | youtube.js | tiktok.js | instagram.js | facebook.js
     ├── services/
     │   ├── downloader.js
     │   ├── compressor.js
@@ -329,8 +329,9 @@ dc-downloader/
 | **X / Twitter** | `x.com`, `twitter.com` | `FAST_FORMAT` (≤1080p, H.264/MP4 preferido) | Opcional (`COOKIES_*`) si el post está restringido | Sin `normalizeUrl` ni `extraArgs` propios |
 | **Reddit** | `reddit.com`, `old.reddit.com`, `redd.it` | `FAST_FORMAT` | No requerida | `normalizeUrl` limpia tracking; si yt-dlp falla en GIFs/imágenes de `i.redd.it` (403), `fetchFallbackMedia` baja el media directo |
 | **YouTube** | `youtube.com`, `youtu.be`, `youtube-nocookie.com` (watch, Shorts, embed, live) | `YOUTUBE_FORMAT` (≤1080p / 60 fps, AVC+M4A) | Opcional (`COOKIES_*`) en contenido con restricción de edad | `normalizeUrl` unifica a `watch?v=`; `extraArgs` usa clients `android,ios,web` |
-| **TikTok** | `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com` | Prefer `play_addr` / `h264_*` / `bytevc1_*`; evita el fallback watermarked `download` | No requerida en el flujo habitual | `normalizeUrl` limpia query; `extraArgs` usa `--impersonate chrome` + app móvil; si yt-dlp falla (p. ej. contenido restringido), `fetchFallbackMedia` resuelve CDN sin cookies |
-| **Instagram** | `instagram.com`, `instagr.am` (`/reel/`, `/p/`, `/tv/`, `/share/`) | `FAST_FORMAT` | Opcional (`COOKIES_*`) si la API exige sesión | `normalizeUrl` limpia tracking; en **carruseles** el bot pregunta qué elemento (vídeo o foto, desde el 1) descargar |
+| **TikTok** | `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com` | Prefer `play_addr` / `h264_*` / `bytevc1_*`; evita el fallback watermarked `download` | No requerida | `normalizeUrl` limpia query; `extraArgs` usa `--impersonate chrome` + app móvil; si yt-dlp falla (p. ej. contenido restringido), `fetchFallbackMedia` resuelve CDN sin cookies |
+| **Instagram** | `instagram.com`, `instagr.am` (`/reel/`, `/p/`, `/tv/`, `/share/`) | Progressive `3/2/1` (H.264); evita DASH VP9 | No requerida | `normalizeUrl` limpia tracking; **carruseles** → Select Menu (vídeo/foto); `include_dash=0`; si yt-dlp falla (Restricted / login), `fetchFallbackMedia` (progressive CDN o resolver público) sin cookies |
+| **Facebook** | `facebook.com`, `fb.watch` (`/reel/`, `/watch/`, `/videos/`, shortlinks) | `hd/sd` progressive (H.264) preferido sobre DASH AV1 | No requerida | `normalizeUrl` unifica reel/watch/fb.watch |
 
 ---
 
@@ -340,8 +341,9 @@ dc-downloader/
 |---------|-------------|
 | Bot no responde | Allowlist (si está activa); token; `pm2 logs` |
 | “Plataforma no soportada” | Host no registrado; tipografía del enlace |
-| Reddit/X/Instagram piden auth | `COOKIES_FILE` o `COOKIES_FROM_BROWSER` |
-| TikTok / Instagram fallan | Actualizar yt-dlp (`yt-dlp -U`); TikTok necesita `curl_cffi` (`pip install -U "yt-dlp[default,curl-cffi]"`) |
+| Reddit/X piden auth | `COOKIES_FILE` o `COOKIES_FROM_BROWSER` (opcional; TikTok/Instagram/Facebook no lo necesitan) |
+| TikTok / Instagram fallan | Actualizar yt-dlp (`yt-dlp -U`); TikTok necesita `curl_cffi`; Instagram usa fallback automático sin cookies |
+| Vídeo IG congelado (audio sí) | Debe salir H.264 progressive; el compressor rechaza `-c copy` de VP9/AV1 |
 | YouTube 403 / JSON raro | Actualizar yt-dlp; revisar `extraArgs` del provider |
 | Barra en cola | Normal: otro `/video` está activo |
 | Encode muy lento | Usar `calidad:rapida` o `auto` |

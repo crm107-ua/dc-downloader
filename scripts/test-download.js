@@ -40,7 +40,7 @@ const FIXTURES = [
   },
   {
     name: 'instagram',
-    url: 'https://www.instagram.com/reel/DdIKGyXyo6z/?stkn=MTU3ZXJwM2licnZuag==',
+    url: 'https://www.instagram.com/reel/DdRMf9oI-gg/?stkn=czE3cjY2azJyNjBr',
   },
   {
     name: 'instagram-2',
@@ -62,13 +62,57 @@ const FIXTURES = [
     playlistItem: 2,
     mediaKind: 'photo',
   },
+  {
+    name: 'instagram-carousel-select',
+    url: 'https://www.instagram.com/p/DdRqAiEjMeb/?utm_source=ig_web_copy_link&stkn=NTc4MTIwNjQ2YQ',
+    /** Only exercises listMediaChoices (Discord Select Menu), no download. */
+    listChoicesOnly: true,
+  },
+  {
+    name: 'facebook-reel',
+    url: 'https://www.facebook.com/reel/1376505661262497',
+  },
+  {
+    name: 'facebook-watch',
+    url: 'https://fb.watch/v/3m6DCkaa-/',
+  },
 ];
 
 function mb(bytes) {
   return (bytes / 1024 / 1024).toFixed(2);
 }
 
+async function testCarouselSelect(fixture) {
+  const { listMediaChoices } = require('../src/services/downloader');
+  console.log(`\n=== ${fixture.name.toUpperCase()} ===`);
+  console.log(fixture.url);
+  const choices = await listMediaChoices(fixture.url);
+  if (!choices || !choices.isCarousel) {
+    throw new Error('Se esperaba un carrusel de Instagram (isCarousel=true)');
+  }
+  if (!Array.isArray(choices.items) || choices.items.length < 2) {
+    throw new Error(`Carrusel con pocos ítems: ${choices.items && choices.items.length}`);
+  }
+  const kinds = new Set(choices.items.map((i) => i.kind));
+  console.log(`title: ${choices.title}`);
+  console.log(`items: ${choices.items.length} (${[...kinds].join(', ')})`);
+  for (const item of choices.items) {
+    console.log(`  - ${item.label} [index=${item.index} kind=${item.kind}]`);
+  }
+  return {
+    name: fixture.name,
+    sizeBytes: 0,
+    durationSeconds: 0,
+    mediaType: 'carousel-select',
+    dest: '(listMediaChoices only)',
+  };
+}
+
 async function testOne(fixture) {
+  if (fixture.listChoicesOnly) {
+    return testCarouselSelect(fixture);
+  }
+
   const config = getConfig();
   console.log(`\n=== ${fixture.name.toUpperCase()} ===`);
   console.log(fixture.url);
@@ -104,6 +148,21 @@ async function testOne(fixture) {
   fs.copyFileSync(result.filePath, dest);
   console.log(`saved: ${dest}`);
 
+  // Discord-safe: Instagram/Facebook outputs must be H.264 (not VP9/AV1 stream-copy).
+  if (result.mediaType !== 'image' && /\.(mp4|m4v|mov)$/i.test(dest)) {
+    const { spawnSync } = require('child_process');
+    const probe = spawnSync(
+      'ffprobe',
+      ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', dest],
+      { encoding: 'utf8', windowsHide: true }
+    );
+    const codec = String(probe.stdout || '').trim().toLowerCase();
+    console.log(`vcodec: ${codec || '(none)'}`);
+    if (codec && !(codec === 'h264' || codec === 'avc1' || codec.startsWith('avc'))) {
+      throw new Error(`${fixture.name}: codec ${codec} no es H.264 (Discord congelaría el vídeo)`);
+    }
+  }
+
   result.cleanup();
 
   if (!okSize || !okDuration) {
@@ -125,7 +184,9 @@ async function main() {
     ? FIXTURES.filter((f) => f.name === only || f.name.startsWith(`${only}-`))
     : FIXTURES;
   if (!list.length) {
-    console.error(`Unknown fixture "${only}". Use: x | reddit | youtube | tiktok | instagram`);
+    console.error(
+      `Unknown fixture "${only}". Use: x | reddit | youtube | tiktok | instagram | facebook`
+    );
     process.exit(1);
   }
 
@@ -144,7 +205,11 @@ async function main() {
   console.log('\n=== SUMMARY ===');
   for (const r of results) {
     const dur =
-      r.mediaType === 'image' ? 'image' : `${Number(r.durationSeconds || 0).toFixed(1)}s`;
+      r.mediaType === 'image'
+        ? 'image'
+        : r.mediaType === 'carousel-select'
+          ? 'selector'
+          : `${Number(r.durationSeconds || 0).toFixed(1)}s`;
     console.log(`OK  ${r.name}: ${mb(r.sizeBytes)} MB, ${dur} -> ${r.dest}`);
   }
   for (const f of failures) {

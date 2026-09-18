@@ -18,7 +18,7 @@ const CAROUSEL_TIMEOUT_MS = 120000;
 
 const data = new SlashCommandBuilder()
   .setName('video')
-  .setDescription('Descarga un video (X, Reddit, YouTube, TikTok, Instagram) y lo envía aquí')
+  .setDescription('Descarga un video (X, Reddit, YouTube, TikTok, Instagram, Facebook) y lo envía aquí')
   .addStringOption((option) =>
     option
       .setName('url')

@@ -110,6 +110,47 @@ async function probeDuration(filePath) {
   return duration;
 }
 
+/**
+ * True when the file already has Discord-safe video (H.264/AVC) + AAC/MP3/opus audio,
+ * or is video-less. VP9/AV1 in MP4 often freezes on Discord after `-c copy`.
+ */
+async function isDiscordSafeContainer(filePath) {
+  try {
+    const { stdout } = await run(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-show_entries',
+        'stream=codec_type,codec_name',
+        '-of',
+        'csv=p=0',
+        filePath,
+      ],
+      { timeoutMs: 20000 }
+    );
+    const lines = String(stdout || '')
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    let hasVideo = false;
+    let videoOk = true;
+    for (const line of lines) {
+      const [type, name] = line.split(',');
+      if (type === 'video') {
+        hasVideo = true;
+        const codec = String(name || '').toLowerCase();
+        if (!(codec === 'h264' || codec === 'avc1' || codec.startsWith('avc'))) {
+          videoOk = false;
+        }
+      }
+    }
+    return hasVideo ? videoOk : true;
+  } catch {
+    return false;
+  }
+}
+
 function parseTimestampToSeconds(value) {
   if (!value) return null;
   if (/^\d+(\.\d+)?$/.test(value)) {
@@ -274,30 +315,34 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress, opti
 
   if (inputSize <= maxBytes) {
     if (typeof onProgress === 'function') onProgress(15, { attempt: 1, attempts: 1 });
-    try {
-      await run(
-        'ffmpeg',
-        ['-y', '-i', inputPath, '-c', 'copy', '-movflags', '+faststart', outputPath],
-        { timeoutMs: 60000 }
-      );
-      if (fs.existsSync(outputPath) && fs.statSync(outputPath).size <= maxBytes) {
-        if (typeof onProgress === 'function') onProgress(100, { attempt: 1, attempts: 1 });
-        return {
-          outputPath,
-          sizeBytes: fs.statSync(outputPath).size,
-          durationSeconds: duration,
-        };
+    const safeCopy = await isDiscordSafeContainer(inputPath);
+    if (safeCopy) {
+      try {
+        await run(
+          'ffmpeg',
+          ['-y', '-i', inputPath, '-c', 'copy', '-movflags', '+faststart', outputPath],
+          { timeoutMs: 60000 }
+        );
+        if (fs.existsSync(outputPath) && fs.statSync(outputPath).size <= maxBytes) {
+          if (typeof onProgress === 'function') onProgress(100, { attempt: 1, attempts: 1 });
+          return {
+            outputPath,
+            sizeBytes: fs.statSync(outputPath).size,
+            durationSeconds: duration,
+          };
+        }
+      } catch {
+        // Fall through to copy/re-encode
       }
-    } catch {
-      // Fall through to re-encode
+      fs.copyFileSync(inputPath, outputPath);
+      if (typeof onProgress === 'function') onProgress(100, { attempt: 1, attempts: 1 });
+      return {
+        outputPath,
+        sizeBytes: fs.statSync(outputPath).size,
+        durationSeconds: duration,
+      };
     }
-    fs.copyFileSync(inputPath, outputPath);
-    if (typeof onProgress === 'function') onProgress(100, { attempt: 1, attempts: 1 });
-    return {
-      outputPath,
-      sizeBytes: fs.statSync(outputPath).size,
-      durationSeconds: duration,
-    };
+    // Non-H.264 under the size cap still needs a Discord-safe re-encode (VP9/AV1 freeze).
   }
 
   // Use almost the full Discord cap; leave a tiny safety margin

@@ -15,7 +15,7 @@
 | `alta` | Mejor imagen, más lento |
 | `rapida` | Más rápido, menor calidad |
 
-Vale para YouTube, X, Reddit, TikTok e Instagram.
+Vale para YouTube, X, Reddit, TikTok, Instagram y Facebook.
 
 ## Ejemplo
 
@@ -28,8 +28,9 @@ Vale para YouTube, X, Reddit, TikTok e Instagram.
 - X / Twitter
 - Reddit
 - YouTube
-- TikTok (sin marca de agua cuando la API lo permite)
-- Instagram (reels, posts con video y **carruseles**: te deja elegir el elemento 1, 2, 3… vídeo o foto)
+- TikTok (sin marca de agua cuando la API lo permite; restringidos sin cookies)
+- Instagram (reels, posts y **carruseles**: eliges el elemento 1, 2, 3… vídeo o foto; H.264; restringidos sin cookies)
+- Facebook (reels, `fb.watch` y videos de página)
 
 ## Límites
 
@@ -42,6 +43,6 @@ Vale para YouTube, X, Reddit, TikTok e Instagram.
 
 - Barra de progreso con tiempo mientras descarga y comprime
 - Al terminar envía solo el video en el mismo canal
-- Si Reddit/X/Instagram fallan por login, hace falta configurar cookies en el servidor
+- TikTok e Instagram resuelven contenido restringido sin cookies en el servidor
 
 by Wanikoko
