@@ -18,6 +18,8 @@ function getConfig() {
   const maxFileSizeMb = Number(process.env.MAX_FILE_SIZE_MB || 10);
   const tempDir = process.env.TEMP_DIR || './temp';
   const tempMaxAgeHours = Number(process.env.TEMP_MAX_AGE_HOURS || 24);
+  const r2LongVideoSeconds = Number(process.env.R2_LONG_VIDEO_SECONDS || 300);
+  const maxDurationR2 = Number(process.env.MAX_DURATION_R2_SECONDS || 7200);
 
   // Preferred: DISCORD_ALLOWED_GUILD_IDS=id1,id2
   // Backward-compatible fallbacks for older .env names
@@ -31,6 +33,16 @@ function getConfig() {
   ];
   const uniqueGuildIds = [...new Set(allowedGuildIds)];
 
+  const r2AccessKeyId = process.env.R2_ACCESS_KEY_ID || '';
+  const r2SecretAccessKey = process.env.R2_SECRET_ACCESS_KEY || '';
+  const r2Bucket = process.env.R2_BUCKET || '';
+  const r2Endpoint = process.env.R2_ENDPOINT || '';
+  const r2PublicBaseUrl = process.env.R2_PUBLIC_BASE_URL || '';
+  const r2EnabledFlag = String(process.env.R2_ENABLED || '').trim();
+  const r2Enabled =
+    (r2EnabledFlag === '1' || /^true$/i.test(r2EnabledFlag)) &&
+    Boolean(r2AccessKeyId && r2SecretAccessKey && r2Bucket && r2Endpoint && r2PublicBaseUrl);
+
   return {
     token: process.env.DISCORD_BOT_TOKEN,
     clientId: process.env.DISCORD_CLIENT_ID,
@@ -42,6 +54,17 @@ function getConfig() {
     maxFileSizeBytes: Math.floor((Number.isFinite(maxFileSizeMb) ? maxFileSizeMb : 10) * 1024 * 1024),
     tempDir,
     tempMaxAgeHours: Number.isFinite(tempMaxAgeHours) && tempMaxAgeHours > 0 ? tempMaxAgeHours : 24,
+    // Long videos (> threshold) go to Cloudflare R2 at high quality (no 10 MB compress).
+    r2Enabled,
+    r2AccountId: process.env.R2_ACCOUNT_ID || '',
+    r2AccessKeyId,
+    r2SecretAccessKey,
+    r2Bucket,
+    r2Endpoint,
+    r2PublicBaseUrl: String(r2PublicBaseUrl).replace(/\/+$/, ''),
+    r2LongVideoSeconds:
+      Number.isFinite(r2LongVideoSeconds) && r2LongVideoSeconds > 0 ? r2LongVideoSeconds : 300,
+    maxDurationR2Seconds: Number.isFinite(maxDurationR2) && maxDurationR2 > 0 ? maxDurationR2 : 7200,
   };
 }
 

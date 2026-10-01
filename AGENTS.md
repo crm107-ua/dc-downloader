@@ -69,10 +69,11 @@ src/
     x.js | reddit.js | youtube.js | tiktok.js | instagram.js | facebook.js
 
   services/
-    downloader.js          # Pipeline: meta → download → compress → cleanup
-    compressor.js          # FFmpeg; modos rapida|auto|alta
+    downloader.js          # Pipeline: meta → download → compress|R2 → cleanup
+    compressor.js          # FFmpeg; modos rapida|auto|alta + hosted HQ
+    r2Storage.js           # Cloudflare R2 (vídeos >5 min)
     jobQueue.js            # FIFO global enqueue()
-    tempCleanup.js         # Barrido oportunista TEMP_DIR
+    tempCleanup.js         # Barrido oportunista TEMP_DIR + R2
 
   utils/
     progress.js            # Embed progreso + heartbeat + UI cola
@@ -137,7 +138,7 @@ InteractionCreate (/video)
 | Instagram freeze / VP9 | `instagram.js` format `3/2/1` + `compressor` no hace `-c copy` de no-H.264 | Mezclar DASH VP9 con stream copy |
 | Instagram restringido / age gate | `providers/instagram.js` `fetchFallbackMedia` (progressive o resolver público) | Cookies obligatorias en Discord |
 | IG/FB viewport minúsculo | `compressor.js` scale con caja cuadrada + `setsar=1` | Cajas 16:9 (`640:360`) que aplastan reels verticales |
-| TikTok restringido / login wall | `providers/tiktok.js` `fetchFallbackMedia` (yt-dlp primero) | Cookies obligatorias en Discord o mensajes de `.env` al usuario |
+| Vídeos >5 min | `r2Storage.js` + `prepareForHostedDelivery` → URL pública (player Discord) | Comprimir a 10 MB (impracticable) |
 | Facebook reel / fb.watch | `providers/facebook.js` + registry | Meter lógica FB en downloader |
 | Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |
 
@@ -193,7 +194,8 @@ Leídas en `getConfig()`:
 | `DISCORD_ALLOWED_GUILD_IDS` | Allowlist opcional (vacío = todos) |
 | `MAX_DURATION_SECONDS` | Pre-check |
 | `MAX_FILE_SIZE_MB` | Cap encode + adjunto |
-| `TEMP_DIR` / `TEMP_MAX_AGE_HOURS` | Workspace + GC |
+| `TEMP_DIR` / `TEMP_MAX_AGE_HOURS` | Workspace + GC (temp y R2) |
+| `R2_*` / `MAX_DURATION_R2_SECONDS` | Vídeos >5 min en Cloudflare R2 |
 | `COOKIES_FILE` / `COOKIES_FROM_BROWSER` | yt-dlp auth |
 
 Nunca imprimir el token en logs. No subir `.env`.

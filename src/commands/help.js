@@ -49,9 +49,13 @@ async function execute(interaction) {
       {
         name: 'Límites',
         value: [
-          `Duración máxima **antes** de descargar: **${maxMin} min**`,
-          `Tamaño máximo del archivo enviado: **${maxMb} MB**`,
-        ].join('\n'),
+          `Adjunto Discord (≤5 min): máximo **${maxMin} min** · **${maxMb} MB**`,
+          config.r2Enabled
+            ? `Vídeos >5 min: calidad alta vía Cloudflare R2 (máx. ~${Math.floor(config.maxDurationR2Seconds / 60)} min)`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
       },
       {
         name: 'Ejemplo',

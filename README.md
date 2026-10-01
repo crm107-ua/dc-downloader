@@ -228,9 +228,16 @@ Los slash commands se registran por guild (no globales). El alcance puede limita
 | `MAX_DURATION_SECONDS` | No | Duración máxima pre-descarga | `600` |
 | `MAX_FILE_SIZE_MB` | No | Tope del MP4 enviado | `10` |
 | `TEMP_DIR` | No | Workspace temporal | `./temp` |
-| `TEMP_MAX_AGE_HOURS` | No | Edad máxima de residuos | `24` |
+| `TEMP_MAX_AGE_HOURS` | No | Edad máxima de residuos (temp + R2) | `24` |
 | `COOKIES_FILE` | No | Cookies Netscape (opcional, X/Reddit/YouTube edad) | — |
 | `COOKIES_FROM_BROWSER` | No | p. ej. `chrome`, `edge`, `firefox` | — |
+| `R2_ENABLED` | No | `1` para activar vídeos largos vía Cloudflare R2 | `0` |
+| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Si R2 | Credenciales S3 de R2 | — |
+| `R2_BUCKET` | Si R2 | Nombre del bucket | `dc-downloader` |
+| `R2_ENDPOINT` | Si R2 | Endpoint S3 de la cuenta | — |
+| `R2_PUBLIC_BASE_URL` | Si R2 | URL pública (`pub-….r2.dev` o dominio custom) | — |
+| `R2_LONG_VIDEO_SECONDS` | No | Umbral para ruta R2 (defecto 5 min) | `300` |
+| `MAX_DURATION_R2_SECONDS` | No | Tope de duración en ruta R2 | `7200` |
 
 Plantilla: [`.env.example`](.env.example). **No** commits de `.env`.
 

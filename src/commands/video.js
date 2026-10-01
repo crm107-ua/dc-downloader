@@ -211,16 +211,8 @@ async function execute(interaction) {
 
   try {
     await progress.force(98, 'upload');
-    const isImage = result.mediaType === 'image';
-    const ext = isImage
-      ? path.extname(result.filePath) || '.jpg'
-      : '.mp4';
-    const safeName = `${result.platform}-${Date.now()}${ext}`;
-    const attachment = new AttachmentBuilder(result.filePath, { name: safeName });
 
-    // Delete progress reply, then send a standalone channel message (not followUp).
-    // followUp replies to the interaction message — if that was deleted, Discord
-    // shows "No se ha podido cargar el mensaje" above the video.
+    // Delete progress reply, then send standalone channel messages (not followUp).
     await progress.close();
     await interaction.deleteReply().catch(() => {});
 
@@ -229,8 +221,6 @@ async function execute(interaction) {
       interaction.user.globalName ||
       interaction.user.username;
     // Compact card: avatar + "Name · 🔗" (link sits to the right of the name).
-    // Discord always renders description below author, so the icon must live in author.name.
-    // Author.url makes the whole name clickable and shows the source URL on hover.
     const requesterEmbed = new EmbedBuilder()
       .setColor(0x2b2d31)
       .setAuthor({
@@ -239,10 +229,22 @@ async function execute(interaction) {
         url,
       });
 
-    // Discord often renders attachments above embeds in the same message.
-    // Send the author card first, then the media, so the card appears on top.
+    // Card first, then media (Discord stacks attachments above embeds in one message).
     await interaction.channel.send({ embeds: [requesterEmbed] });
-    await interaction.channel.send({ files: [attachment] });
+
+    if (result.delivery === 'r2' && result.publicUrl) {
+      // Bare MP4 URL → Discord unfurls an inline video player (closest to native).
+      // R2 serves video/mp4 + Accept-Ranges so seeking works in the client.
+      await interaction.channel.send({ content: result.publicUrl });
+    } else {
+      const isImage = result.mediaType === 'image';
+      const ext = isImage
+        ? path.extname(result.filePath) || '.jpg'
+        : '.mp4';
+      const safeName = `${result.platform}-${Date.now()}${ext}`;
+      const attachment = new AttachmentBuilder(result.filePath, { name: safeName });
+      await interaction.channel.send({ files: [attachment] });
+    }
   } catch (err) {
     await progress.close();
     const message = err && err.message ? err.message : 'Error al enviar el archivo.';

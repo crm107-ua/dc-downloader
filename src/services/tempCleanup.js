@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getConfig } = require('../config');
+const { isR2Configured, sweepExpiredObjects } = require('./r2Storage');
 
 /** @type {Promise<void> | null} */
 let inFlight = null;
@@ -10,9 +11,9 @@ let lastRunAt = 0;
 const MIN_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
- * Opportunistic cleanup of TEMP_DIR entries older than TEMP_MAX_AGE_HOURS.
+ * Opportunistic cleanup of TEMP_DIR (+ R2 objects) older than TEMP_MAX_AGE_HOURS.
  * Safe with concurrent downloads: only deletes aged paths; active job folders are new.
- * Throttled + single-flight so parallel /download calls share one sweep.
+ * Throttled + single-flight so parallel /video calls share one sweep.
  */
 function scheduleTempCleanup() {
   const now = Date.now();
@@ -23,6 +24,13 @@ function scheduleTempCleanup() {
     lastRunAt = Date.now();
     try {
       await sweepExpiredTemp();
+      const config = getConfig();
+      if (isR2Configured(config)) {
+        const r2 = await sweepExpiredObjects(config);
+        if (r2.removed > 0) {
+          console.log(`[r2-cleanup] removed ${r2.removed} expired object(s)`);
+        }
+      }
     } catch (err) {
       console.warn('[temp-cleanup] sweep failed:', err.message || err);
     } finally {

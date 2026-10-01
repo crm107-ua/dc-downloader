@@ -3,8 +3,14 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const { getConfig } = require('../config');
 const { resolveProviderByUrl } = require('../providers');
-const { run, compressToLimit, probeDuration, normalizeQualityMode } = require('./compressor');
+const { run, compressToLimit, prepareForHostedDelivery, probeDuration, normalizeQualityMode } = require('./compressor');
 const { scheduleTempCleanup } = require('./tempCleanup');
+const {
+  isR2Configured,
+  uploadFile,
+  buildObjectKey,
+  sweepExpiredObjects,
+} = require('./r2Storage');
 const { mapRange } = require('../utils/progress');
 
 function ensureTempDir(tempDir) {
@@ -34,9 +40,16 @@ function providerExtraArgs(provider, options = {}) {
   return Array.isArray(args) ? args : [];
 }
 
-function providerFormatSelector(provider, durationSeconds = null) {
-  // Always prefer a high-quality source; compressor handles size with 2-pass.
-  // Only slightly cap very long clips so download itself does not take forever.
+function providerFormatSelector(provider, durationSeconds = null, options = {}) {
+  // Hosted/R2 path: keep full source quality (up to 1080p H.264).
+  if (options.hostedDelivery) {
+    if (provider && typeof provider.formatSelector === 'function') {
+      return provider.formatSelector();
+    }
+    const { FAST_FORMAT } = require('../providers/formats');
+    return FAST_FORMAT;
+  }
+  // Attachment path: slightly cap very long clips so download+compress stay practical.
   const dur = Number(durationSeconds);
   if (Number.isFinite(dur) && dur > 480) {
     return [
@@ -157,8 +170,17 @@ function assertDuration(meta, maxDurationSeconds) {
   return duration;
 }
 
-async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent, durationSeconds = null, downloadOptions = {}) {
+async function downloadRaw(
+  url,
+  provider,
+  outTemplate,
+  config,
+  onDownloadPercent,
+  durationSeconds = null,
+  downloadOptions = {}
+) {
   const isPhoto = downloadOptions.mediaKind === 'photo';
+  const hostedDelivery = Boolean(downloadOptions.hostedDelivery);
   const args = [
     '--no-playlist',
     '--no-warnings',
@@ -172,7 +194,7 @@ async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent
   if (!isPhoto) {
     args.push(
       '-f',
-      providerFormatSelector(provider, durationSeconds),
+      providerFormatSelector(provider, durationSeconds, { hostedDelivery }),
       '--merge-output-format',
       'mp4'
     );
@@ -180,9 +202,13 @@ async function downloadRaw(url, provider, outTemplate, config, onDownloadPercent
 
   args.push('-o', outTemplate, ...cookiesArgs(config), url);
 
+  const timeoutMs = hostedDelivery
+    ? Math.min(60 * 60 * 1000, Math.max(15 * 60 * 1000, Math.ceil(Number(durationSeconds || 600) * 8000)))
+    : 300000;
+
   let buffer = '';
   await run('yt-dlp', args, {
-    timeoutMs: 300000,
+    timeoutMs,
     rollingBuffer: true,
     onStderr: (text) => {
       buffer += text;
@@ -256,7 +282,12 @@ async function runYtdlpVideoPipeline({
   jobDir,
   jobId,
   onProgress,
+  maxDurationSeconds,
 }) {
+  const durationCap =
+    Number.isFinite(maxDurationSeconds) && maxDurationSeconds > 0
+      ? maxDurationSeconds
+      : config.maxDurationSeconds;
   let meta = { title: 'media', id: jobId };
   let preDuration = null;
   let usedFallback = false;
@@ -265,7 +296,7 @@ async function runYtdlpVideoPipeline({
   if (downloadOptions.mediaKind !== 'photo') {
     try {
       meta = await fetchMetadata(resolvedUrl, config, provider, downloadOptions);
-      preDuration = assertDuration(meta, config.maxDurationSeconds);
+      preDuration = assertDuration(meta, durationCap);
       if (preDuration != null) {
         console.log(`[${platform}] duration OK pre-download: ${preDuration}s`);
       } else {
@@ -276,7 +307,7 @@ async function runYtdlpVideoPipeline({
       console.warn(`[${platform}] yt-dlp metadata failed, trying fallback: ${err.message || err}`);
       const fb = await resolveFallbackMedia(provider, resolvedUrl);
       if (fb.durationSeconds != null) {
-        assertDuration({ duration: fb.durationSeconds }, config.maxDurationSeconds);
+        assertDuration({ duration: fb.durationSeconds }, durationCap);
       }
       meta = { title: fb.title, id: fb.id || jobId, duration: fb.durationSeconds };
       preDuration = fb.durationSeconds;
@@ -324,7 +355,7 @@ async function runYtdlpVideoPipeline({
       console.warn(`[${platform}] yt-dlp download failed, trying fallback: ${err.message || err}`);
       const fb = await resolveFallbackMedia(provider, resolvedUrl);
       if (fb.durationSeconds != null) {
-        assertDuration({ duration: fb.durationSeconds }, config.maxDurationSeconds);
+        assertDuration({ duration: fb.durationSeconds }, durationCap);
       }
       meta = { title: fb.title, id: fb.id || meta.id || jobId, duration: fb.durationSeconds };
       fallbackAnalysis = { hadWatermarkOnly: Boolean(fb.hadWatermarkOnly) };
@@ -343,7 +374,7 @@ async function runYtdlpVideoPipeline({
 
   await onProgress(72, 'download');
 
-  return { meta, rawPath, fallbackAnalysis, qualityMode, usedFallback };
+  return { meta, rawPath, fallbackAnalysis, qualityMode, usedFallback, preDuration };
 }
 
 /**
@@ -388,7 +419,11 @@ async function downloadAndPrepare(url, options = {}) {
 
   try {
     await onProgress(2, 'metadata');
-    console.log(`[${platform}] checking duration before download (max ${config.maxDurationSeconds}s)...`);
+    const r2Ready = isR2Configured(config);
+    const durationCap = r2Ready ? config.maxDurationR2Seconds : config.maxDurationSeconds;
+    console.log(
+      `[${platform}] checking duration before download (max ${durationCap}s${r2Ready ? ', R2 long-video ready' : ''})...`
+    );
     console.log(`[${platform}] url=${resolvedUrl}`);
     console.log(`[${platform}] qualityMode=${qualityMode}`);
     if (downloadOptions.playlistItem) {
@@ -397,16 +432,34 @@ async function downloadAndPrepare(url, options = {}) {
       );
     }
 
+    // Peek duration from metadata when possible so long clips download at full quality.
+    let hostedDelivery = false;
+    if (r2Ready && downloadOptions.mediaKind !== 'photo') {
+      try {
+        const earlyMeta = await fetchMetadata(resolvedUrl, config, provider, downloadOptions);
+        const earlyDur = Number(earlyMeta && earlyMeta.duration);
+        if (Number.isFinite(earlyDur) && earlyDur > config.r2LongVideoSeconds) {
+          hostedDelivery = true;
+          console.log(
+            `[${platform}] duration ${Math.round(earlyDur)}s > ${config.r2LongVideoSeconds}s → R2 high-quality path`
+          );
+        }
+      } catch {
+        // Pipeline will fetch metadata again / fallback
+      }
+    }
+
     const pipeline = await runYtdlpVideoPipeline({
       resolvedUrl,
       provider,
       config,
-      downloadOptions,
+      downloadOptions: { ...downloadOptions, hostedDelivery },
       qualityMode,
       platform,
       jobDir,
       jobId,
       onProgress,
+      maxDurationSeconds: durationCap,
     });
     const { meta, rawPath, fallbackAnalysis } = pipeline;
 
@@ -434,11 +487,66 @@ async function downloadAndPrepare(url, options = {}) {
     }
 
     const probed = await probeDuration(rawPath);
-    if (probed > config.maxDurationSeconds) {
+    const useR2 =
+      r2Ready && Number.isFinite(probed) && probed > config.r2LongVideoSeconds;
+
+    if (!useR2 && probed > config.maxDurationSeconds) {
       const mins = Math.floor(config.maxDurationSeconds / 60);
       throw new Error(
         `El video dura ${Math.round(probed)}s y el máximo permitido es ${config.maxDurationSeconds}s (~${mins} min).`
       );
+    }
+    if (useR2 && probed > config.maxDurationR2Seconds) {
+      const mins = Math.floor(config.maxDurationR2Seconds / 60);
+      throw new Error(
+        `El video dura ${Math.round(probed)}s y el máximo con R2 es ${config.maxDurationR2Seconds}s (~${mins} min).`
+      );
+    }
+
+    const analysis =
+      typeof provider.analyzeMeta === 'function' ? provider.analyzeMeta(meta) || {} : {};
+    const hadWatermarkOnly = Boolean(
+      fallbackAnalysis.hadWatermarkOnly || analysis.hadWatermarkOnly
+    );
+
+    // Long videos: remux/encode for Discord player (no 10 MB cap) → Cloudflare R2 public URL.
+    if (useR2) {
+      const hostedPath = path.join(jobDir, `${jobId}-hosted.mp4`);
+      await onProgress(72, 'compress');
+      console.log(`[${platform}] preparing high-quality MP4 for R2 (${probed.toFixed(1)}s)...`);
+      const prepared = await prepareForHostedDelivery(rawPath, hostedPath, (ratio) => {
+        onProgress(mapRange(ratio, 72, 88), 'compress');
+      });
+      await onProgress(88, 'upload');
+      const key = buildObjectKey(jobId, '.mp4');
+      console.log(`[${platform}] uploading to R2 key=${key} (${(prepared.sizeBytes / 1024 / 1024).toFixed(1)} MB)...`);
+      const uploaded = await uploadFile(config, prepared.outputPath, key, {
+        contentType: 'video/mp4',
+        onProgress: (pct) => onProgress(mapRange(pct, 88, 97), 'upload'),
+      });
+      await onProgress(97, 'upload');
+      // Local job dir can go; R2 object retained until age sweep (same TEMP_MAX_AGE_HOURS).
+      sweepExpiredObjects(config)
+        .then((r) => {
+          if (r.removed > 0) console.log(`[r2-cleanup] removed ${r.removed} expired object(s)`);
+        })
+        .catch(() => {});
+
+      return {
+        filePath: null,
+        publicUrl: uploaded.publicUrl,
+        r2Key: uploaded.key,
+        delivery: 'r2',
+        title: meta.title || meta.id || 'video',
+        platform,
+        providerLabel: provider.label,
+        qualityMode,
+        mediaType: 'video',
+        sizeBytes: uploaded.sizeBytes,
+        durationSeconds: prepared.durationSeconds,
+        hadWatermarkOnly,
+        cleanup,
+      };
     }
 
     const compressedPath = path.join(jobDir, `${jobId}-out.mp4`);
@@ -454,11 +562,10 @@ async function downloadAndPrepare(url, options = {}) {
     );
     await onProgress(95, 'compress');
 
-    const analysis =
-      typeof provider.analyzeMeta === 'function' ? provider.analyzeMeta(meta) || {} : {};
-
     return {
       filePath: compressed.outputPath,
+      publicUrl: null,
+      delivery: 'attachment',
       title: meta.title || meta.id || 'video',
       platform,
       providerLabel: provider.label,
@@ -466,9 +573,7 @@ async function downloadAndPrepare(url, options = {}) {
       mediaType: 'video',
       sizeBytes: compressed.sizeBytes,
       durationSeconds: compressed.durationSeconds,
-      hadWatermarkOnly: Boolean(
-        fallbackAnalysis.hadWatermarkOnly || analysis.hadWatermarkOnly
-      ),
+      hadWatermarkOnly,
       cleanup,
     };
   } catch (err) {

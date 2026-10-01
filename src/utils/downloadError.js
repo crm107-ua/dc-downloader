@@ -37,6 +37,9 @@ function formatDownloadError(raw) {
     .join('\n')
     .trim();
 
+  if (/Sign in to confirm your age|may be inappropriate for some users/i.test(msg)) {
+    return 'YouTube pide confirmación de edad para este vídeo. En el servidor hace falta una sesión válida (COOKIES_FILE).';
+  }
   if (/comfortable for some audiences|Log in for access/i.test(msg)) {
     return 'TikTok no permite descargar este vídeo (contenido restringido o privado).';
   }

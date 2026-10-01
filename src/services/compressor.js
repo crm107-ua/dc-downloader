@@ -547,8 +547,91 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress, opti
   throw lastError || new Error('No se pudo comprimir el video bajo el límite.');
 }
 
+/**
+ * Prepare a video for Discord link-player / R2 hosting: H.264 + AAC + faststart.
+ * No size cap — keeps maximum practical quality (copy when already safe, else CRF encode).
+ */
+async function prepareForHostedDelivery(inputPath, outputPath, onProgress) {
+  const duration = await probeDuration(inputPath);
+  const safe = await isDiscordSafeContainer(inputPath);
+
+  if (safe) {
+    if (typeof onProgress === 'function') onProgress(20);
+    await run(
+      'ffmpeg',
+      ['-y', '-i', inputPath, '-c', 'copy', '-movflags', '+faststart', outputPath],
+      { timeoutMs: Math.min(30 * 60 * 1000, Math.max(120000, Math.ceil(duration * 2000))) }
+    );
+    if (typeof onProgress === 'function') onProgress(100);
+    return {
+      outputPath,
+      sizeBytes: fs.statSync(outputPath).size,
+      durationSeconds: duration,
+      remuxed: true,
+    };
+  }
+
+  // High-quality H.264 for Discord embed players (no Discord 10 MB cap).
+  const timeoutMs = Math.min(45 * 60 * 1000, Math.max(180000, Math.ceil(duration * 2500)));
+  if (typeof onProgress === 'function') onProgress(5);
+  await run(
+    'ffmpeg',
+    [
+      '-y',
+      '-threads',
+      '0',
+      '-i',
+      inputPath,
+      '-vf',
+      "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,setsar=1,format=yuv420p",
+      '-c:v',
+      'libx264',
+      '-preset',
+      'medium',
+      '-crf',
+      '20',
+      '-profile:v',
+      'high',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '160k',
+      '-ac',
+      '2',
+      '-ar',
+      '44100',
+      '-movflags',
+      '+faststart',
+      '-progress',
+      'pipe:1',
+      '-nostats',
+      outputPath,
+    ],
+    {
+      timeoutMs,
+      rollingBuffer: true,
+      onStdout: makeProgressHandler(duration, (pct) => {
+        if (typeof onProgress === 'function') onProgress(pct);
+      }, 0, 1),
+    }
+  );
+  if (typeof onProgress === 'function') onProgress(100);
+  if (!fs.existsSync(outputPath)) {
+    throw new Error('FFmpeg no generó el MP4 para R2.');
+  }
+  return {
+    outputPath,
+    sizeBytes: fs.statSync(outputPath).size,
+    durationSeconds: duration,
+    remuxed: false,
+  };
+}
+
 module.exports = {
   compressToLimit,
+  prepareForHostedDelivery,
   probeDuration,
   run,
   parseFfmpegProgress,

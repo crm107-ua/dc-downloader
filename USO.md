@@ -34,8 +34,9 @@ Vale para YouTube, X, Reddit, TikTok, Instagram y Facebook.
 
 ## Límites
 
-- Máximo **10 minutos** de duración (antes de descargar)
-- Archivo final por debajo de **10 MB**
+- Máximo **10 minutos** de duración para adjuntos comprimidos (&lt;10 MB)
+- Vídeos de **más de 5 minutos**: se suben a Cloudflare R2 en alta calidad y Discord los reproduce con el player inline (mismo criterio de borrado por antigüedad que `temp/`)
+- Archivo adjunto final por debajo de **10 MB** (clips cortos)
 - Solo funciona en los servidores autorizados del bot (si hay allowlist; si `DISCORD_ALLOWED_GUILD_IDS` está vacío, en cualquiera)
 - Si hay otro `/video` en marcha, el tuyo espera **en cola**
 
