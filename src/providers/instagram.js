@@ -42,6 +42,25 @@ function unescapeJsString(s) {
     .replace(/\\"/g, '"');
 }
 
+const MEDIA_PATH_MARKERS = new Set(['reel', 'reels', 'p', 'tv', 'share']);
+
+/** True for /reel/, /p/, /tv/, /share/ (or /user/reel/ID) — not profile/home URLs. */
+function isInstagramMediaPost(urlString) {
+  let u;
+  try {
+    u = new URL(urlString);
+  } catch {
+    return false;
+  }
+  const parts = u.pathname.split('/').filter(Boolean);
+  if (!parts.length) return false;
+  if (MEDIA_PATH_MARKERS.has(parts[0].toLowerCase()) && parts[1]) return true;
+  if (parts.length >= 3 && MEDIA_PATH_MARKERS.has(parts[1].toLowerCase()) && parts[2]) {
+    return true;
+  }
+  return false;
+}
+
 function decodeJwtPayload(token) {
   const parts = String(token || '').split('.');
   if (parts.length < 2) return null;
@@ -135,7 +154,7 @@ const provider = {
     if (!parts.length) return `https://www.instagram.com${u.pathname}`;
 
     const kind = parts[0].toLowerCase();
-    const markers = new Set(['reel', 'reels', 'p', 'tv', 'share']);
+    const markers = MEDIA_PATH_MARKERS;
     if (markers.has(kind) && parts[1]) {
       const id = parts[1].replace(/[^a-zA-Z0-9_-]/g, '');
       if (!id) return rawUrl;
@@ -196,6 +215,10 @@ const provider = {
    * @returns {Promise<null | { isCarousel: boolean, title?: string, items: Array<{ index: number, id: string, kind: 'video'|'photo', label: string }> }>}
    */
   async listMediaChoices(url, ctx) {
+    // Profiles / explore URLs are not carousels — avoid yt-dlp instagram:user noise.
+    if (!isInstagramMediaPost(url)) {
+      return { isCarousel: false, title: null, items: [] };
+    }
     const run = ctx && ctx.run;
     if (typeof run !== 'function') {
       throw new Error('listMediaChoices requiere ctx.run');
@@ -335,8 +358,10 @@ const provider = {
 
 module.exports = provider;
 module.exports.matchesHost = (host) => matchesHost(provider, host);
+module.exports.isInstagramMediaPost = isInstagramMediaPost;
 module.exports._test = {
   extractDownloadgramCandidates,
   pickProgressiveUrl,
   unescapeJsString,
+  isInstagramMediaPost,
 };

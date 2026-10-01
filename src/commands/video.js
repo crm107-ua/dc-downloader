@@ -13,6 +13,7 @@ const { enqueue } = require('../services/jobQueue');
 const { createProgressReporter } = require('../utils/progress');
 const { normalizeQualityMode } = require('../services/compressor');
 const { formatDownloadError } = require('../utils/downloadError');
+const { isInstagramMediaPost } = require('../providers/instagram');
 
 const CAROUSEL_TIMEOUT_MS = 120000;
 
@@ -140,6 +141,16 @@ async function execute(interaction) {
   await interaction.deferReply();
 
   let carouselPick = null;
+  if (provider && provider.id === 'instagram' && !isInstagramMediaPost(url)) {
+    await interaction.editReply({
+      content:
+        'Ese enlace de Instagram no es un reel, post o carrusel. Pega el enlace del vídeo o la foto concreta.',
+      embeds: [],
+      components: [],
+    });
+    return;
+  }
+
   if (provider && typeof provider.listMediaChoices === 'function') {
     try {
       await interaction.editReply({ content: 'Analizando enlace de Instagram…' });
@@ -150,9 +161,9 @@ async function execute(interaction) {
         carouselPick = pick;
       }
     } catch (err) {
-      const message = err && err.message ? err.message : 'No se pudo analizar el carrusel.';
+      const message = formatDownloadError(err && err.message ? err.message : err);
       await interaction.editReply({
-        content: `No se pudo preparar el carrusel:\n\`\`\`${message.slice(0, 1500)}\`\`\``,
+        content: `No se pudo preparar el carrusel:\n${message}`,
         embeds: [],
         components: [],
       });
@@ -191,7 +202,7 @@ async function execute(interaction) {
     await progress.close();
     const message = formatDownloadError(err && err.message ? err.message : err);
     await interaction.editReply({
-      content: `No se pudo descargar el media:\n\`\`\`${message}\`\`\``,
+      content: `No se pudo descargar el media:\n${message}`,
       embeds: [],
       components: [],
     });
@@ -224,10 +235,10 @@ async function execute(interaction) {
         iconURL: interaction.user.displayAvatarURL({ size: 128 }),
       });
 
-    await interaction.channel.send({
-      embeds: [requesterEmbed],
-      files: [attachment],
-    });
+    // Discord often renders attachments above embeds in the same message.
+    // Send the author card first, then the media, so the card appears on top.
+    await interaction.channel.send({ embeds: [requesterEmbed] });
+    await interaction.channel.send({ files: [attachment] });
   } catch (err) {
     await progress.close();
     const message = err && err.message ? err.message : 'Error al enviar el archivo.';
