@@ -9,7 +9,9 @@ const data = new SlashCommandBuilder()
 async function execute(interaction) {
   const config = getConfig();
   const maxMin = Math.floor(config.maxDurationSeconds / 60);
+  const longMin = Math.floor(config.r2LongVideoSeconds / 60);
   const maxMb = config.maxFileSizeMb;
+  const r2Gb = config.r2MaxStorageGb;
   const providers = listProviders()
     .map((p) => p.label)
     .join(' · ');
@@ -17,7 +19,7 @@ async function execute(interaction) {
   const embed = new EmbedBuilder()
     .setTitle('Ayuda · Video Downloader')
     .setDescription(
-      `Descarga videos cortos de **${supportedLabels()}** y los envía en este mismo canal.`
+      `Descarga videos de **${supportedLabels()}** y los envía en este mismo canal.`
     )
     .addFields(
       {
@@ -37,9 +39,10 @@ async function execute(interaction) {
         name: 'Calidad',
         value: [
           '`auto` — equilibrado (**por defecto** si no eliges nada)',
-          '`alta` — máxima calidad, más lento',
-          '`rapida` — menos calidad, más rápido',
+          '`alta` — máxima calidad, más lento (clips cortos)',
+          '`rapida` — menos calidad, más rápido (clips cortos)',
           `Vale para ${supportedLabels()}.`,
+          `En vídeos >${longMin} min no se comprime a ${maxMb} MB: se sube en alta calidad.`,
         ].join('\n'),
       },
       {
@@ -47,11 +50,21 @@ async function execute(interaction) {
         value: providers || supportedLabels(),
       },
       {
-        name: 'Límites',
+        name: 'Límites y entrega',
         value: [
-          `Adjunto Discord (≤5 min): máximo **${maxMin} min** · **${maxMb} MB**`,
+          `Duración máxima (todos los proveedores): **${maxMin} min**`,
+          `≤ **${longMin} min** → adjunto Discord comprimido (máx. **${maxMb} MB**)`,
           config.r2Enabled
-            ? `Vídeos >5 min: calidad alta vía Cloudflare R2 (máx. ~${Math.floor(config.maxDurationR2Seconds / 60)} min)`
+            ? `> **${longMin} min** → Cloudflare R2 en alta calidad + player inline en Discord`
+            : `> **${longMin} min** → requiere R2 configurado en el servidor`,
+        ].join('\n'),
+      },
+      {
+        name: 'Limpieza',
+        value: [
+          `Temp del VPS: se borra la carpeta de cada job al terminar; residuos >**${config.tempMaxAgeHours} h** se barren`,
+          config.r2Enabled
+            ? `R2: no se borra por tiempo — FIFO al acercarse a **${r2Gb} GB** (tope gratis ~10 GB)`
             : null,
         ]
           .filter(Boolean)
@@ -63,7 +76,7 @@ async function execute(interaction) {
       }
     )
     .setFooter({
-      text: 'TikTok e Instagram usan resolución alternativa sin cookies cuando hace falta · by Wanikoko',
+      text: 'TikTok/Instagram sin cookies cuando hace falta · YouTube edad puede requerir COOKIES_FILE · by Wanikoko',
     });
 
   await interaction.reply({ embeds: [embed], ephemeral: true });

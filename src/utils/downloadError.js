@@ -2,8 +2,23 @@
  * User-facing yt-dlp / download errors (no cookie setup instructions, no Python noise).
  */
 function formatDownloadError(raw) {
-  let msg = String(raw || 'Error desconocido al descargar.').trim();
+  const original = String(raw || 'Error desconocido al descargar.').trim();
 
+  // Match known cases on the raw string first (cookie boilerplate shares the same line).
+  if (/Sign in to confirm your age|may be inappropriate for some users/i.test(original)) {
+    return 'YouTube pide confirmación de edad para este vídeo. Configura COOKIES_FILE en el servidor con una sesión de YouTube.';
+  }
+  if (/comfortable for some audiences|Log in for access/i.test(original)) {
+    return 'TikTok no permite descargar este vídeo (contenido restringido o privado).';
+  }
+  if (/Restricted Video|isn't available to everyone|can't be seen by certain audiences/i.test(original)) {
+    return 'Instagram no permite descargar este vídeo (contenido restringido o privado).';
+  }
+  if (/instagram:user|Unable to extract data/i.test(original)) {
+    return 'Ese enlace de Instagram no es un reel, post o carrusel. Pega el enlace del vídeo o la foto concreta.';
+  }
+
+  let msg = original;
   if (msg.startsWith('yt-dlp exited with code')) {
     const idx = msg.indexOf(':');
     msg = idx >= 0 ? msg.slice(idx + 1).trim() : msg;
@@ -16,16 +31,17 @@ function formatDownloadError(raw) {
       if (!t) return '';
       if (/^Deprecated Feature:/i.test(t)) return '';
       if (/Please update to Python/i.test(t)) return '';
-      if (/Use --cookies-from-browser/i.test(t)) return '';
-      if (/Use --cookies for the authentication/i.test(t)) return '';
+      if (/^Use --cookies-from-browser/i.test(t)) return '';
+      if (/^Use --cookies for the authentication/i.test(t)) return '';
       if (/^See\s+https:\/\/github.com\/yt-dlp/i.test(t)) return '';
       if (/^Confirm you are on the latest version/i.test(t)) return '';
       if (/^filling out the appropriate issue template/i.test(t)) return '';
 
-      // Keep the useful part; drop trailing yt-dlp issue boilerplate on the same line
       t = t.replace(/;?\s*please report this issue on\s+https?:\/\/\S+/i, '');
       t = t.replace(/,?\s*filling out the appropriate issue template\.?/i, '');
       t = t.replace(/Confirm you are on the latest version using\s+yt-dlp -U\.?/i, '');
+      t = t.replace(/\s*Use --cookies-from-browser or --cookies for the authentication\.?/gi, '');
+      t = t.replace(/\s*See\s+https:\/\/github\.com\/yt-dlp\/\S+/gi, '');
       t = t.replace(/https?:\/\/github\.com\/yt-dlp\/\S+/gi, '');
       t = t.replace(/^ERROR:\s*/i, '');
       t = t.replace(/^\[instagram:user\]\s*[^:]+:\s*/i, 'instagram:user: ');
@@ -37,18 +53,6 @@ function formatDownloadError(raw) {
     .join('\n')
     .trim();
 
-  if (/Sign in to confirm your age|may be inappropriate for some users/i.test(msg)) {
-    return 'YouTube pide confirmación de edad para este vídeo. En el servidor hace falta una sesión válida (COOKIES_FILE).';
-  }
-  if (/comfortable for some audiences|Log in for access/i.test(msg)) {
-    return 'TikTok no permite descargar este vídeo (contenido restringido o privado).';
-  }
-  if (/Restricted Video|isn't available to everyone|can't be seen by certain audiences/i.test(msg)) {
-    return 'Instagram no permite descargar este vídeo (contenido restringido o privado).';
-  }
-  if (/instagram:user|Unable to extract data/i.test(msg)) {
-    return 'Ese enlace de Instagram no es un reel, post o carrusel. Pega el enlace del vídeo o la foto concreta.';
-  }
   if (/HTTP Error 403:\s*Blocked|Unable to download webpage: HTTP Error 403/i.test(msg)) {
     return 'El servidor de media bloqueó la descarga (403). Prueba de nuevo o con otro enlace.';
   }

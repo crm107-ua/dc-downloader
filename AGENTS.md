@@ -138,7 +138,8 @@ InteractionCreate (/video)
 | Instagram freeze / VP9 | `instagram.js` format `3/2/1` + `compressor` no hace `-c copy` de no-H.264 | Mezclar DASH VP9 con stream copy |
 | Instagram restringido / age gate | `providers/instagram.js` `fetchFallbackMedia` (progressive o resolver público) | Cookies obligatorias en Discord |
 | IG/FB viewport minúsculo | `compressor.js` scale con caja cuadrada + `setsar=1` | Cajas 16:9 (`640:360`) que aplastan reels verticales |
-| Vídeos >5 min | `r2Storage.js` + `prepareForHostedDelivery` → URL pública (player Discord) | Comprimir a 10 MB (impracticable) |
+| Vídeos >5 min | `r2Storage.js` + upload directo si ya es H.264 → URL pública | Comprimir a 10 MB |
+| R2 almacenamiento | FIFO `enforceStorageBudget` (tope ~9 GB del gratis 10 GB) | Borrar por edad como temp |
 | Facebook reel / fb.watch | `providers/facebook.js` + registry | Meter lógica FB en downloader |
 | Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |
 
@@ -194,9 +195,9 @@ Leídas en `getConfig()`:
 | `DISCORD_ALLOWED_GUILD_IDS` | Allowlist opcional (vacío = todos) |
 | `MAX_DURATION_SECONDS` | Pre-check |
 | `MAX_FILE_SIZE_MB` | Cap encode + adjunto |
-| `TEMP_DIR` / `TEMP_MAX_AGE_HOURS` | Workspace + GC (temp y R2) |
-| `R2_*` / `MAX_DURATION_R2_SECONDS` | Vídeos >5 min en Cloudflare R2 |
-| `COOKIES_FILE` / `COOKIES_FROM_BROWSER` | yt-dlp auth |
+| `TEMP_DIR` / `TEMP_MAX_AGE_HOURS` | Workspace local + GC por edad |
+| `R2_*` / `R2_MAX_STORAGE_GB` | Vídeos >5 min; FIFO ≤9 GB |
+| `COOKIES_FILE` / `COOKIES_FROM_BROWSER` | yt-dlp auth (p. ej. YouTube edad) |
 
 Nunca imprimir el token en logs. No subir `.env`.
 

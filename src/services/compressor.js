@@ -548,26 +548,23 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress, opti
 }
 
 /**
- * Prepare a video for Discord link-player / R2 hosting: H.264 + AAC + faststart.
- * No size cap — keeps maximum practical quality (copy when already safe, else CRF encode).
+ * Prepare a video for Discord link-player / R2 hosting: H.264 + AAC.
+ * Fast path: if already Discord-safe, return the input file as-is (no FFmpeg).
+ * Otherwise encode to H.264 CRF (no size cap).
  */
 async function prepareForHostedDelivery(inputPath, outputPath, onProgress) {
   const duration = await probeDuration(inputPath);
   const safe = await isDiscordSafeContainer(inputPath);
 
   if (safe) {
-    if (typeof onProgress === 'function') onProgress(20);
-    await run(
-      'ffmpeg',
-      ['-y', '-i', inputPath, '-c', 'copy', '-movflags', '+faststart', outputPath],
-      { timeoutMs: Math.min(30 * 60 * 1000, Math.max(120000, Math.ceil(duration * 2000))) }
-    );
+    // Skip remux/compress — upload the downloaded file directly for max speed.
     if (typeof onProgress === 'function') onProgress(100);
     return {
-      outputPath,
-      sizeBytes: fs.statSync(outputPath).size,
+      outputPath: inputPath,
+      sizeBytes: fs.statSync(inputPath).size,
       durationSeconds: duration,
-      remuxed: true,
+      remuxed: false,
+      skipped: true,
     };
   }
 
@@ -587,7 +584,7 @@ async function prepareForHostedDelivery(inputPath, outputPath, onProgress) {
       '-c:v',
       'libx264',
       '-preset',
-      'medium',
+      'veryfast',
       '-crf',
       '20',
       '-profile:v',
@@ -626,6 +623,7 @@ async function prepareForHostedDelivery(inputPath, outputPath, onProgress) {
     sizeBytes: fs.statSync(outputPath).size,
     durationSeconds: duration,
     remuxed: false,
+    skipped: false,
   };
 }
 

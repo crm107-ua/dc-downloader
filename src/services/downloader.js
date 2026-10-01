@@ -9,7 +9,7 @@ const {
   isR2Configured,
   uploadFile,
   buildObjectKey,
-  sweepExpiredObjects,
+  enforceStorageBudget,
 } = require('./r2Storage');
 const { mapRange } = require('../utils/progress');
 
@@ -420,7 +420,7 @@ async function downloadAndPrepare(url, options = {}) {
   try {
     await onProgress(2, 'metadata');
     const r2Ready = isR2Configured(config);
-    const durationCap = r2Ready ? config.maxDurationR2Seconds : config.maxDurationSeconds;
+    const durationCap = config.maxDurationSeconds;
     console.log(
       `[${platform}] checking duration before download (max ${durationCap}s${r2Ready ? ', R2 long-video ready' : ''})...`
     );
@@ -487,19 +487,18 @@ async function downloadAndPrepare(url, options = {}) {
     }
 
     const probed = await probeDuration(rawPath);
-    const useR2 =
-      r2Ready && Number.isFinite(probed) && probed > config.r2LongVideoSeconds;
+    const needsR2 = Number.isFinite(probed) && probed > config.r2LongVideoSeconds;
+    const useR2 = needsR2 && r2Ready;
 
-    if (!useR2 && probed > config.maxDurationSeconds) {
+    if (probed > config.maxDurationSeconds) {
       const mins = Math.floor(config.maxDurationSeconds / 60);
       throw new Error(
         `El video dura ${Math.round(probed)}s y el máximo permitido es ${config.maxDurationSeconds}s (~${mins} min).`
       );
     }
-    if (useR2 && probed > config.maxDurationR2Seconds) {
-      const mins = Math.floor(config.maxDurationR2Seconds / 60);
+    if (needsR2 && !r2Ready) {
       throw new Error(
-        `El video dura ${Math.round(probed)}s y el máximo con R2 es ${config.maxDurationR2Seconds}s (~${mins} min).`
+        `Este vídeo dura más de ${Math.floor(config.r2LongVideoSeconds / 60)} min y requiere Cloudflare R2 (R2_ENABLED) en el servidor.`
       );
     }
 
@@ -509,28 +508,30 @@ async function downloadAndPrepare(url, options = {}) {
       fallbackAnalysis.hadWatermarkOnly || analysis.hadWatermarkOnly
     );
 
-    // Long videos: remux/encode for Discord player (no 10 MB cap) → Cloudflare R2 public URL.
+    // Long videos: skip size-compress; upload Discord-safe MP4 to R2 (FIFO ≤9 GB).
     if (useR2) {
       const hostedPath = path.join(jobDir, `${jobId}-hosted.mp4`);
       await onProgress(72, 'compress');
-      console.log(`[${platform}] preparing high-quality MP4 for R2 (${probed.toFixed(1)}s)...`);
+      console.log(`[${platform}] preparing R2 delivery (${probed.toFixed(1)}s, skip compress if H.264)...`);
       const prepared = await prepareForHostedDelivery(rawPath, hostedPath, (ratio) => {
         onProgress(mapRange(ratio, 72, 88), 'compress');
       });
+      if (prepared.skipped) {
+        console.log(`[${platform}] already Discord-safe — uploading without re-encode`);
+      }
       await onProgress(88, 'upload');
       const key = buildObjectKey(jobId, '.mp4');
-      console.log(`[${platform}] uploading to R2 key=${key} (${(prepared.sizeBytes / 1024 / 1024).toFixed(1)} MB)...`);
+      console.log(
+        `[${platform}] uploading to R2 key=${key} (${(prepared.sizeBytes / 1024 / 1024).toFixed(1)} MB)...`
+      );
       const uploaded = await uploadFile(config, prepared.outputPath, key, {
         contentType: 'video/mp4',
         onProgress: (pct) => onProgress(mapRange(pct, 88, 97), 'upload'),
       });
       await onProgress(97, 'upload');
-      // Local job dir can go; R2 object retained until age sweep (same TEMP_MAX_AGE_HOURS).
-      sweepExpiredObjects(config)
-        .then((r) => {
-          if (r.removed > 0) console.log(`[r2-cleanup] removed ${r.removed} expired object(s)`);
-        })
-        .catch(() => {});
+      if (uploaded.fifo && uploaded.fifo.removed > 0) {
+        console.log(`[r2-fifo] evicted ${uploaded.fifo.removed} older object(s) after upload`);
+      }
 
       return {
         filePath: null,

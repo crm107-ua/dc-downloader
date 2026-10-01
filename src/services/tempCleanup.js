@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getConfig } = require('../config');
-const { isR2Configured, sweepExpiredObjects } = require('./r2Storage');
+const { isR2Configured, enforceStorageBudget } = require('./r2Storage');
 
 /** @type {Promise<void> | null} */
 let inFlight = null;
@@ -11,9 +11,9 @@ let lastRunAt = 0;
 const MIN_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
- * Opportunistic cleanup of TEMP_DIR (+ R2 objects) older than TEMP_MAX_AGE_HOURS.
- * Safe with concurrent downloads: only deletes aged paths; active job folders are new.
- * Throttled + single-flight so parallel /video calls share one sweep.
+ * Opportunistic cleanup:
+ * - TEMP_DIR: age-based (TEMP_MAX_AGE_HOURS) — per-job dirs, safe with concurrency
+ * - R2: FIFO storage budget (≤ R2_MAX_STORAGE_GB, default 9 of free 10 GB)
  */
 function scheduleTempCleanup() {
   const now = Date.now();
@@ -26,9 +26,9 @@ function scheduleTempCleanup() {
       await sweepExpiredTemp();
       const config = getConfig();
       if (isR2Configured(config)) {
-        const r2 = await sweepExpiredObjects(config);
+        const r2 = await enforceStorageBudget(config);
         if (r2.removed > 0) {
-          console.log(`[r2-cleanup] removed ${r2.removed} expired object(s)`);
+          console.log(`[r2-fifo] sweep removed ${r2.removed} object(s)`);
         }
       }
     } catch (err) {
@@ -66,7 +66,6 @@ async function sweepExpiredTemp() {
         await fs.promises.rm(fullPath, { recursive: true, force: true });
         removed += 1;
       } catch (err) {
-        // Busy/locked/already gone — ignore (common on Windows with concurrent IO)
         if (err && (err.code === 'ENOENT' || err.code === 'EBUSY' || err.code === 'EPERM')) {
           return;
         }

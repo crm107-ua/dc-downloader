@@ -1,9 +1,11 @@
 /**
  * Cloudflare R2 storage (S3-compatible) for long Discord videos (>5 min).
  * Public objects are served from R2_PUBLIC_BASE_URL so Discord can unfurl a native player.
+ *
+ * Retention is NOT age-based: FIFO eviction keeps bucket ≤ R2_MAX_STORAGE_GB (default 9)
+ * to stay under Cloudflare's free 10 GB tier with headroom.
  */
 const fs = require('fs');
-const path = require('path');
 const {
   S3Client,
   ListObjectsV2Command,
@@ -46,42 +48,53 @@ function publicObjectUrl(config, key) {
   return `${base}/${safeKey}`;
 }
 
+async function listAllObjects(client, bucket) {
+  const objects = [];
+  let continuationToken;
+  do {
+    const listed = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        ContinuationToken: continuationToken,
+      })
+    );
+    for (const obj of listed.Contents || []) {
+      if (obj && obj.Key) objects.push(obj);
+    }
+    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return objects;
+}
+
 async function emptyBucket(config) {
   if (!isR2Configured(config)) {
     throw new Error('R2 no está configurado.');
   }
   const client = createR2Client(config);
-  let removed = 0;
-  let continuationToken;
+  const contents = await listAllObjects(client, config.r2Bucket);
+  if (!contents.length) return { removed: 0 };
 
-  do {
-    const listed = await client.send(
-      new ListObjectsV2Command({
+  // Delete in batches of 1000 (S3 limit)
+  let removed = 0;
+  for (let i = 0; i < contents.length; i += 1000) {
+    const chunk = contents.slice(i, i + 1000);
+    await client.send(
+      new DeleteObjectsCommand({
         Bucket: config.r2Bucket,
-        ContinuationToken: continuationToken,
+        Delete: {
+          Objects: chunk.map((obj) => ({ Key: obj.Key })),
+          Quiet: true,
+        },
       })
     );
-    const contents = listed.Contents || [];
-    if (contents.length) {
-      await client.send(
-        new DeleteObjectsCommand({
-          Bucket: config.r2Bucket,
-          Delete: {
-            Objects: contents.map((obj) => ({ Key: obj.Key })),
-            Quiet: true,
-          },
-        })
-      );
-      removed += contents.length;
-    }
-    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
-  } while (continuationToken);
-
+    removed += chunk.length;
+  }
   return { removed };
 }
 
 /**
  * Upload a local file; returns { key, publicUrl, sizeBytes }.
+ * Then enforces FIFO storage budget (default ≤9 GB).
  */
 async function uploadFile(config, localPath, key, options = {}) {
   if (!isR2Configured(config)) {
@@ -129,10 +142,17 @@ async function uploadFile(config, localPath, key, options = {}) {
     await upload.done();
   }
 
+  // FIFO eviction so free-tier usage stays under the soft cap (default 9 GB of 10 GB).
+  const fifo = await enforceStorageBudget(config, { protectKey: key }).catch((err) => {
+    console.warn('[r2-fifo] enforce failed:', err.message || err);
+    return { removed: 0, totalBytes: null };
+  });
+
   return {
     key,
     publicUrl: publicObjectUrl(config, key),
     sizeBytes,
+    fifo,
   };
 }
 
@@ -152,43 +172,67 @@ async function deleteObject(config, key) {
 }
 
 /**
- * Delete R2 objects older than tempMaxAgeHours (same retention as local TEMP_DIR).
+ * FIFO storage budget: if total object size > r2MaxStorageBytes, delete oldest first
+ * until under the cap. Newest uploads (protectKey) are deleted last.
+ *
+ * @param {object} config
+ * @param {{ protectKey?: string }} [options]
+ * @returns {Promise<{ removed: number, totalBytes: number, maxBytes: number }>}
  */
-async function sweepExpiredObjects(config) {
-  if (!isR2Configured(config)) return { removed: 0 };
+async function enforceStorageBudget(config, options = {}) {
+  if (!isR2Configured(config)) {
+    return { removed: 0, totalBytes: 0, maxBytes: 0 };
+  }
+  const maxBytes = config.r2MaxStorageBytes;
   const client = createR2Client(config);
-  const maxAgeMs = config.tempMaxAgeHours * 60 * 60 * 1000;
-  const cutoff = Date.now() - maxAgeMs;
-  let removed = 0;
-  let continuationToken;
+  const objects = await listAllObjects(client, config.r2Bucket);
 
-  do {
-    const listed = await client.send(
-      new ListObjectsV2Command({
+  let totalBytes = objects.reduce((sum, obj) => sum + (Number(obj.Size) || 0), 0);
+  if (totalBytes <= maxBytes) {
+    return { removed: 0, totalBytes, maxBytes };
+  }
+
+  // Oldest first; keep protectKey until everything else is gone.
+  const protectKey = options.protectKey || null;
+  const ordered = objects.slice().sort((a, b) => {
+    const ta = a.LastModified ? new Date(a.LastModified).getTime() : 0;
+    const tb = b.LastModified ? new Date(b.LastModified).getTime() : 0;
+    if (a.Key === protectKey) return 1;
+    if (b.Key === protectKey) return -1;
+    return ta - tb;
+  });
+
+  const toDelete = [];
+  for (const obj of ordered) {
+    if (totalBytes <= maxBytes) break;
+    toDelete.push({ Key: obj.Key });
+    totalBytes -= Number(obj.Size) || 0;
+  }
+
+  let removed = 0;
+  for (let i = 0; i < toDelete.length; i += 1000) {
+    const chunk = toDelete.slice(i, i + 1000);
+    await client.send(
+      new DeleteObjectsCommand({
         Bucket: config.r2Bucket,
-        ContinuationToken: continuationToken,
+        Delete: { Objects: chunk, Quiet: true },
       })
     );
-    const stale = (listed.Contents || []).filter((obj) => {
-      const t = obj.LastModified ? new Date(obj.LastModified).getTime() : 0;
-      return t > 0 && t < cutoff;
-    });
-    if (stale.length) {
-      await client.send(
-        new DeleteObjectsCommand({
-          Bucket: config.r2Bucket,
-          Delete: {
-            Objects: stale.map((obj) => ({ Key: obj.Key })),
-            Quiet: true,
-          },
-        })
-      );
-      removed += stale.length;
-    }
-    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
-  } while (continuationToken);
+    removed += chunk.length;
+  }
 
-  return { removed };
+  if (removed > 0) {
+    console.log(
+      `[r2-fifo] removed ${removed} object(s); budget ${(maxBytes / 1024 / 1024 / 1024).toFixed(2)} GB, now ~${(totalBytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+    );
+  }
+
+  return { removed, totalBytes, maxBytes };
+}
+
+/** @deprecated age-based R2 GC — use enforceStorageBudget (FIFO) instead */
+async function sweepExpiredObjects(config) {
+  return enforceStorageBudget(config);
 }
 
 function buildObjectKey(jobId, ext = '.mp4') {
@@ -204,6 +248,7 @@ module.exports = {
   emptyBucket,
   uploadFile,
   deleteObject,
+  enforceStorageBudget,
   sweepExpiredObjects,
   buildObjectKey,
 };
