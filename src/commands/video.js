@@ -228,15 +228,16 @@ async function execute(interaction) {
       (interaction.member && interaction.member.displayName) ||
       interaction.user.globalName ||
       interaction.user.username;
-    // Compact card: avatar + name; 🔗 markdown link shows the source URL on hover.
+    // Compact card: avatar + "Name · 🔗" (link sits to the right of the name).
+    // Discord always renders description below author, so the icon must live in author.name.
+    // Author.url makes the whole name clickable and shows the source URL on hover.
     const requesterEmbed = new EmbedBuilder()
       .setColor(0x2b2d31)
       .setAuthor({
-        name: requesterName,
+        name: `${requesterName} · 🔗`,
         iconURL: interaction.user.displayAvatarURL({ size: 64 }),
         url,
-      })
-      .setDescription(`[🔗](${url})`);
+      });
 
     // Discord often renders attachments above embeds in the same message.
     // Send the author card first, then the media, so the card appears on top.
