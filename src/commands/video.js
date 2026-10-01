@@ -212,8 +212,20 @@ async function execute(interaction) {
     // shows "No se ha podido cargar el mensaje" above the video.
     await progress.close();
     await interaction.deleteReply().catch(() => {});
+
+    const requesterName =
+      (interaction.member && interaction.member.displayName) ||
+      interaction.user.globalName ||
+      interaction.user.username;
+    const requesterEmbed = new EmbedBuilder()
+      .setColor(0x2b2d31)
+      .setAuthor({
+        name: requesterName,
+        iconURL: interaction.user.displayAvatarURL({ size: 128 }),
+      });
+
     await interaction.channel.send({
-      content: `Pedido por ${interaction.user}`,
+      embeds: [requesterEmbed],
       files: [attachment],
     });
   } catch (err) {

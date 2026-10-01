@@ -42,7 +42,7 @@ Vale para YouTube, X, Reddit, TikTok, Instagram y Facebook.
 ## Notas
 
 - Barra de progreso con tiempo mientras descarga y comprime
-- Al terminar envía el video en el mismo canal indicando quién lo pidió (`Pedido por @usuario`)
+- Al terminar envía el media en el mismo canal con una card del usuario que lo pidió (avatar + nombre)
 - TikTok e Instagram resuelven contenido restringido sin cookies en el servidor
 
 by Wanikoko

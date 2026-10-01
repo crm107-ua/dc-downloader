@@ -113,7 +113,7 @@ InteractionCreate (/video)
        → fetchMetadata (yt-dlp) → assertDuration  (omitido en fotos)
        → downloadRaw (yt-dlp -f provider | thumbnail si foto)
        → compressToLimit (FFmpeg)  (omitido en fotos)
-  → deleteReply + channel.send({ content: Pedido por @user, files: [media] })
+  → deleteReply + channel.send({ embeds: [author card], files: [media] })
   → cleanup jobDir
 ```
 
