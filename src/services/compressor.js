@@ -111,8 +111,8 @@ async function probeDuration(filePath) {
 }
 
 /**
- * True when the file already has Discord-safe video (H.264/AVC) + AAC/MP3/opus audio,
- * or is video-less. VP9/AV1 in MP4 often freezes on Discord after `-c copy`.
+ * True when the file already has Discord-safe video (H.264/AVC), square pixels (SAR 1:1),
+ * or is video-less. VP9/AV1 freezes after `-c copy`; non-1 SAR makes Discord show a tiny frame.
  */
 async function isDiscordSafeContainer(filePath) {
   try {
@@ -121,31 +121,29 @@ async function isDiscordSafeContainer(filePath) {
       [
         '-v',
         'error',
+        '-select_streams',
+        'v:0',
         '-show_entries',
-        'stream=codec_type,codec_name',
+        'stream=codec_name,sample_aspect_ratio',
         '-of',
         'csv=p=0',
         filePath,
       ],
       { timeoutMs: 20000 }
     );
-    const lines = String(stdout || '')
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    let hasVideo = false;
-    let videoOk = true;
-    for (const line of lines) {
-      const [type, name] = line.split(',');
-      if (type === 'video') {
-        hasVideo = true;
-        const codec = String(name || '').toLowerCase();
-        if (!(codec === 'h264' || codec === 'avc1' || codec.startsWith('avc'))) {
-          videoOk = false;
-        }
-      }
+    const line = String(stdout || '').trim().split(/\r?\n/)[0] || '';
+    if (!line) return true; // no video stream (photo path, etc.)
+    const [codecRaw, sarRaw] = line.split(',');
+    const codec = String(codecRaw || '').toLowerCase();
+    if (!(codec === 'h264' || codec === 'avc1' || codec.startsWith('avc'))) {
+      return false;
     }
-    return hasVideo ? videoOk : true;
+    const sar = String(sarRaw || '').trim();
+    // N/A / 0:1 / 1:1 are fine; anything else is anamorphic → re-encode with setsar=1
+    if (sar && sar !== 'N/A' && sar !== '0:1' && sar !== '1:1') {
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -193,15 +191,25 @@ function parseFfmpegProgress(chunk, durationSeconds) {
   return null;
 }
 
-/** Choose output resolution from available video bitrate for best perceived quality */
-function pickScaleForBitrate(videoBitrateKbps) {
+/**
+ * Max edge (square bounding box) from available video bitrate.
+ * Landscape-only targets (e.g. 640:360) crushed vertical IG/FB reels into
+ * postage-stamp sizes in Discord; a square max keeps orientation intact.
+ */
+function pickMaxEdgeForBitrate(videoBitrateKbps) {
   // Prefer fewer pixels when bitrate is tight — sharper than mushy higher res
-  if (videoBitrateKbps >= 2200) return '1920:1080';
-  if (videoBitrateKbps >= 1100) return '1280:720';
-  if (videoBitrateKbps >= 550) return '854:480';
-  if (videoBitrateKbps >= 280) return '640:360';
-  if (videoBitrateKbps >= 160) return '512:288';
-  return '426:240';
+  if (videoBitrateKbps >= 2200) return 1080;
+  if (videoBitrateKbps >= 1100) return 720;
+  if (videoBitrateKbps >= 550) return 540;
+  if (videoBitrateKbps >= 280) return 480;
+  if (videoBitrateKbps >= 160) return 360;
+  return 320;
+}
+
+/** @deprecated alias kept for readability in attempt objects */
+function pickScaleForBitrate(videoBitrateKbps) {
+  const edge = pickMaxEdgeForBitrate(videoBitrateKbps);
+  return `${edge}:${edge}`;
 }
 
 function makeProgressHandler(duration, onProgress, passIndex, passCount) {
@@ -366,7 +374,9 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress, opti
   for (let i = 0; i < attempts.length; i += 1) {
     const attempt = attempts[i];
     const scaleFlags = qualityMode === 'rapida' ? 'bilinear' : 'lanczos';
-    const vf = `scale=${attempt.scale}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=${scaleFlags},format=yuv420p`;
+    // Square box + decrease preserves portrait/landscape; setsar=1 clears anamorphic SAR
+    // that some Instagram/Facebook progressive streams carry (tiny Discord viewport).
+    const vf = `scale=${attempt.scale}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=${scaleFlags},setsar=1,format=yuv420p`;
     const commonVideo = [
       '-vf',
       vf,

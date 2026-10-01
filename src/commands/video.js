@@ -213,6 +213,7 @@ async function execute(interaction) {
     await progress.close();
     await interaction.deleteReply().catch(() => {});
     await interaction.channel.send({
+      content: `Pedido por ${interaction.user}`,
       files: [attachment],
     });
   } catch (err) {

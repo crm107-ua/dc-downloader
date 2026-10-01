@@ -113,7 +113,7 @@ InteractionCreate (/video)
        → fetchMetadata (yt-dlp) → assertDuration  (omitido en fotos)
        → downloadRaw (yt-dlp -f provider | thumbnail si foto)
        → compressToLimit (FFmpeg)  (omitido en fotos)
-  → deleteReply + channel.send({ files: [media] })
+  → deleteReply + channel.send({ content: Pedido por @user, files: [media] })
   → cleanup jobDir
 ```
 
@@ -136,6 +136,7 @@ InteractionCreate (/video)
 | Instagram carrusel | `providers/instagram.js` `listMediaChoices` + UI en `commands/video.js` | Forzar siempre el primer ítem en downloader |
 | Instagram freeze / VP9 | `instagram.js` format `3/2/1` + `compressor` no hace `-c copy` de no-H.264 | Mezclar DASH VP9 con stream copy |
 | Instagram restringido / age gate | `providers/instagram.js` `fetchFallbackMedia` (progressive o resolver público) | Cookies obligatorias en Discord |
+| IG/FB viewport minúsculo | `compressor.js` scale con caja cuadrada + `setsar=1` | Cajas 16:9 (`640:360`) que aplastan reels verticales |
 | TikTok restringido / login wall | `providers/tiktok.js` `fetchFallbackMedia` (yt-dlp primero) | Cookies obligatorias en Discord o mensajes de `.env` al usuario |
 | Facebook reel / fb.watch | `providers/facebook.js` + registry | Meter lógica FB en downloader |
 | Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |
