@@ -5,6 +5,33 @@ const os = require('os');
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
+/**
+ * Prefer a modern yt-dlp. System /usr/local/bin (often months old) gets googlevideo 403.
+ * Override with YT_DLP_BIN if needed.
+ */
+function resolveYtDlpBin() {
+  if (process.env.YT_DLP_BIN) return process.env.YT_DLP_BIN;
+  const candidates = [
+    path.join(os.homedir(), '.local', 'bin', 'yt-dlp'),
+    '/home/carlos/.local/bin/yt-dlp',
+  ];
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // try next
+    }
+  }
+  return 'yt-dlp';
+}
+
+const YT_DLP_BIN = resolveYtDlpBin();
+
+function isYtDlpCommand(command) {
+  return command === 'yt-dlp' || /(^|[\\/])yt-dlp(\.exe)?$/i.test(String(command));
+}
+
 function run(command, args, options = {}) {
   const {
     onStdout,
@@ -14,8 +41,10 @@ function run(command, args, options = {}) {
     ...spawnOptions
   } = options;
 
+  const resolvedCommand = command === 'yt-dlp' ? YT_DLP_BIN : command;
+
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(resolvedCommand, args, {
       windowsHide: true,
       ...spawnOptions,
     });
@@ -47,7 +76,7 @@ function run(command, args, options = {}) {
         }
         finish(
           reject,
-          new Error(`${command} exceeded timeout (${Math.round(timeoutMs / 1000)}s)`)
+          new Error(`${resolvedCommand} exceeded timeout (${Math.round(timeoutMs / 1000)}s)`)
         );
       }, timeoutMs);
     }
@@ -73,12 +102,12 @@ function run(command, args, options = {}) {
 
     child.on('close', (code) => {
       // yt-dlp exits 101 when --max-downloads is reached (intentional stop).
-      if (code === 0 || (command === 'yt-dlp' && code === 101)) {
+      if (code === 0 || (isYtDlpCommand(resolvedCommand) && code === 101)) {
         finish(resolve, { stdout, stderr, code });
       } else {
         const detail = (stderr || stdout || '').trim().slice(-2000);
         const err = new Error(
-          `${command} exited with code ${code}${detail ? `: ${detail}` : ''}`
+          `${resolvedCommand} exited with code ${code}${detail ? `: ${detail}` : ''}`
         );
         err.stderr = stderr;
         err.stdout = stdout;
@@ -549,27 +578,37 @@ async function compressToLimit(inputPath, outputPath, maxBytes, onProgress, opti
 
 /**
  * Prepare a video for Discord link-player / R2 hosting: H.264 + AAC.
- * Fast path: if already Discord-safe, return the input file as-is (no FFmpeg).
- * Otherwise encode to H.264 CRF (no size cap).
+ * Discord only reliably unfurls playable MP4s around ~100–250 MB from external URLs.
+ * - Already safe and ≤200 MB → upload as-is (fast + max source quality)
+ * - Larger → encode 1080p CRF-ish bitrate for a Discord-friendly ~200 MB cap
  */
 async function prepareForHostedDelivery(inputPath, outputPath, onProgress) {
   const duration = await probeDuration(inputPath);
   const safe = await isDiscordSafeContainer(inputPath);
+  const inputSize = fs.statSync(inputPath).size;
+  // Discord unfurls ~100–350 MB external MP4s reliably; skip slow re-encode when possible.
+  const DISCORD_PLAYABLE_BYTES = 350 * 1024 * 1024;
 
-  if (safe) {
-    // Skip remux/compress — upload the downloaded file directly for max speed.
+  if (safe && inputSize <= DISCORD_PLAYABLE_BYTES) {
     if (typeof onProgress === 'function') onProgress(100);
     return {
       outputPath: inputPath,
-      sizeBytes: fs.statSync(inputPath).size,
+      sizeBytes: inputSize,
       durationSeconds: duration,
       remuxed: false,
       skipped: true,
     };
   }
 
-  // High-quality H.264 for Discord embed players (no Discord 10 MB cap).
-  const timeoutMs = Math.min(45 * 60 * 1000, Math.max(180000, Math.ceil(duration * 2500)));
+  const dur = Math.max(1, Number(duration) || 1);
+  const targetBytes = 180 * 1024 * 1024;
+  const totalKbps = Math.floor((targetBytes * 8) / dur / 1000);
+  const audioKbps = 128;
+  const videoKbps = Math.max(900, Math.min(6000, totalKbps - audioKbps));
+  // Long clips: 720p + ultrafast — Discord player, much faster encode.
+  const maxH = dur > 900 ? 720 : 1080;
+
+  const timeoutMs = Math.min(25 * 60 * 1000, Math.max(120000, Math.ceil(dur * 1200)));
   if (typeof onProgress === 'function') onProgress(5);
   await run(
     'ffmpeg',
@@ -580,21 +619,25 @@ async function prepareForHostedDelivery(inputPath, outputPath, onProgress) {
       '-i',
       inputPath,
       '-vf',
-      "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,setsar=1,format=yuv420p",
+      `scale='min(${maxH},iw)':'min(${maxH},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=fast_bilinear,setsar=1,format=yuv420p`,
       '-c:v',
       'libx264',
       '-preset',
-      'veryfast',
-      '-crf',
-      '20',
+      'ultrafast',
+      '-b:v',
+      `${videoKbps}k`,
+      '-maxrate',
+      `${Math.floor(videoKbps * 1.25)}k`,
+      '-bufsize',
+      `${Math.floor(videoKbps * 2)}k`,
       '-profile:v',
-      'high',
+      'main',
       '-pix_fmt',
       'yuv420p',
       '-c:a',
       'aac',
       '-b:a',
-      '160k',
+      `${audioKbps}k`,
       '-ac',
       '2',
       '-ar',
@@ -635,4 +678,5 @@ module.exports = {
   parseFfmpegProgress,
   normalizeQualityMode,
   QUALITY_MODES,
+  YT_DLP_BIN,
 };

@@ -229,12 +229,11 @@ async function execute(interaction) {
         url,
       });
 
-    // Card first, then media (Discord stacks attachments above embeds in one message).
+    // Card first (username · 🔗), then media.
     await interaction.channel.send({ embeds: [requesterEmbed] });
 
     if (result.delivery === 'r2' && result.publicUrl) {
-      // Bare MP4 URL → Discord unfurls an inline video player (closest to native).
-      // R2 serves video/mp4 + Accept-Ranges so seeking works in the client.
+      // Bare MP4 URL → Discord unfurls the inline player. Do not edit/spoiler after.
       await interaction.channel.send({ content: result.publicUrl });
     } else {
       const isImage = result.mediaType === 'image';

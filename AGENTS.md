@@ -134,6 +134,7 @@ InteractionCreate (/video)
 | Cookies | `.env` `COOKIES_*` | Meter cookies en código |
 | Cola / paralelismo | `jobQueue.js` | Quitar enqueue de `video.js` |
 | YouTube URL weird | `providers/youtube.js` `normalizeUrl` | Truncar stdout a mano |
+| YouTube age-gate | `providers/youtube.js` `fetchFallbackMedia` (Innertube / frontends / CDN oficial p.ej. Rockstar) | Pedir COOKIES_FILE al usuario |
 | Instagram carrusel | `providers/instagram.js` `listMediaChoices` + UI en `commands/video.js` | Forzar siempre el primer ítem en downloader |
 | Instagram freeze / VP9 | `instagram.js` format `3/2/1` + `compressor` no hace `-c copy` de no-H.264 | Mezclar DASH VP9 con stream copy |
 | Instagram restringido / age gate | `providers/instagram.js` `fetchFallbackMedia` (progressive o resolver público) | Cookies obligatorias en Discord |
@@ -197,9 +198,13 @@ Leídas en `getConfig()`:
 | `MAX_FILE_SIZE_MB` | Cap encode + adjunto |
 | `TEMP_DIR` / `TEMP_MAX_AGE_HOURS` | Workspace local + GC por edad |
 | `R2_*` / `R2_MAX_STORAGE_GB` | Vídeos >5 min; FIFO ≤9 GB |
-| `COOKIES_FILE` / `COOKIES_FROM_BROWSER` | yt-dlp auth (p. ej. YouTube edad) |
+| `COOKIES_FILE` / `COOKIES_FROM_BROWSER` | yt-dlp auth opcional (casi nunca; YT edad usa fallback) |
+| `BOT_OFFLINE` / `MAINTENANCE_MODE` | `1` → todos los slash responden «Servidor apagado, prueba más tarde.» |
+| `YT_DLP_BIN` | Ruta absoluta a yt-dlp (prod: `~/.local/bin/yt-dlp`) |
 
 Nunca imprimir el token en logs. No subir `.env`.
+
+En apagado limpio (`pm2 stop` / SIGTERM) el bot también responde «Servidor apagado…» a comandos nuevos mientras drena la cola (~12 s).
 
 ---
 

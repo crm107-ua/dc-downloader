@@ -229,7 +229,7 @@ Los slash commands se registran por guild (no globales). El alcance puede limita
 | `MAX_FILE_SIZE_MB` | No | Tope del MP4 adjunto (clips ≤5 min) | `10` |
 | `TEMP_DIR` | No | Workspace temporal | `./temp` |
 | `TEMP_MAX_AGE_HOURS` | No | GC de residuos locales en el VPS | `24` |
-| `COOKIES_FILE` | No | Cookies Netscape (opcional, X/Reddit/YouTube edad) | — |
+| `COOKIES_FILE` | No | Cookies Netscape (opcional, X/Reddit) | — |
 | `COOKIES_FROM_BROWSER` | No | p. ej. `chrome`, `edge`, `firefox` | — |
 | `R2_ENABLED` | No | `1` para activar vídeos largos vía Cloudflare R2 | `0` |
 | `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Si R2 | Credenciales S3 de R2 | — |
@@ -335,7 +335,7 @@ dc-downloader/
 |------------|--------------|----------------|------|---------------------------|
 | **X / Twitter** | `x.com`, `twitter.com` | `FAST_FORMAT` (≤1080p, H.264/MP4 preferido) | Opcional (`COOKIES_*`) si el post está restringido | Sin `normalizeUrl` ni `extraArgs` propios |
 | **Reddit** | `reddit.com`, `old.reddit.com`, `redd.it` | `FAST_FORMAT` | No requerida | `normalizeUrl` limpia tracking; si yt-dlp falla en GIFs/imágenes de `i.redd.it` (403), `fetchFallbackMedia` baja el media directo |
-| **YouTube** | `youtube.com`, `youtu.be`, `youtube-nocookie.com` (watch, Shorts, embed, live) | `YOUTUBE_FORMAT` (≤1080p / 60 fps, AVC+M4A) | Opcional (`COOKIES_*`) en contenido con restricción de edad | `normalizeUrl` unifica a `watch?v=`; `extraArgs` usa clients `android,ios,web` |
+| **YouTube** | `youtube.com`, `youtu.be`, `youtube-nocookie.com` (watch, Shorts, embed, live) | `YOUTUBE_FORMAT` (≤1080p / 60 fps, AVC+M4A) | Age-gate: `fetchFallbackMedia` (Innertube / Piped-Invidious / CDN oficial p.ej. Rockstar) sin cookies | `normalizeUrl` unifica a `watch?v=`; yt-dlp clients por defecto |
 | **TikTok** | `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com` | Prefer `play_addr` / `h264_*` / `bytevc1_*`; evita el fallback watermarked `download` | No requerida | `normalizeUrl` limpia query; `extraArgs` usa `--impersonate chrome` + app móvil; si yt-dlp falla (p. ej. contenido restringido), `fetchFallbackMedia` resuelve CDN sin cookies |
 | **Instagram** | `instagram.com`, `instagr.am` (`/reel/`, `/p/`, `/tv/`, `/share/`) | Progressive `3/2/1` (H.264); evita DASH VP9 | No requerida | `normalizeUrl` limpia tracking; **carruseles** → Select Menu (vídeo/foto); `include_dash=0`; si yt-dlp falla (Restricted / login), `fetchFallbackMedia` (progressive CDN o resolver público) sin cookies |
 | **Facebook** | `facebook.com`, `fb.watch` (`/reel/`, `/watch/`, `/videos/`, shortlinks) | `hd/sd` progressive (H.264) preferido sobre DASH AV1 | No requerida | `normalizeUrl` unifica reel/watch/fb.watch |

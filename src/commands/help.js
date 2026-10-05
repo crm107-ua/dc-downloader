@@ -4,7 +4,7 @@ const { supportedLabels, listProviders } = require('../providers');
 
 const data = new SlashCommandBuilder()
   .setName('help')
-  .setDescription('Ayuda de uso del bot de descarga de videos');
+  .setDescription('Cómo usar el bot (explicación sencilla)');
 
 async function execute(interaction) {
   const config = getConfig();
@@ -12,59 +12,66 @@ async function execute(interaction) {
   const longMin = Math.floor(config.r2LongVideoSeconds / 60);
   const maxMb = config.maxFileSizeMb;
   const r2Gb = config.r2MaxStorageGb;
+  const tempH = config.tempMaxAgeHours;
   const providers = listProviders()
     .map((p) => p.label)
-    .join(' · ');
+    .join(', ');
 
   const embed = new EmbedBuilder()
-    .setTitle('Ayuda · Video Downloader')
+    .setTitle('Cómo usar este bot')
     .setDescription(
-      `Descarga videos de **${supportedLabels()}** y los envía en este mismo canal.`
+      'Pega el enlace de un vídeo o foto y el bot lo descarga y lo deja en este canal para que todo el mundo lo vea sin salir de Discord.'
     )
     .addFields(
       {
-        name: 'Comandos',
+        name: 'Qué tienes que hacer',
         value: [
-          '`/video url:<enlace> [calidad]` — descarga y envía el video',
-          'En carruseles de Instagram te pide qué elemento (1, 2, 3…) quieres',
-          '`/help` — muestra esta ayuda',
+          '1. Escribe `/video`',
+          '2. En **url** pega el enlace (YouTube, TikTok, Instagram, etc.)',
+          '3. Opcional: elige **calidad** (`auto` suele ir bien)',
+          '4. Espera: verás una barra de progreso y, al terminar, el vídeo en el chat',
+          '',
+          'Si el post de Instagram es un carrusel (varias fotos/vídeos), el bot te preguntará cuál quieres.',
         ].join('\n'),
       },
       {
-        name: 'Cola',
-        value:
-          'Puedes usar `/video` en varios canales a la vez. Solo se procesa **uno** cada vez; el resto espera en cola con su posición visible.',
-      },
-      {
-        name: 'Calidad',
-        value: [
-          '`auto` — equilibrado (**por defecto** si no eliges nada)',
-          '`alta` — máxima calidad, más lento (clips cortos)',
-          '`rapida` — menos calidad, más rápido (clips cortos)',
-          `Vale para ${supportedLabels()}.`,
-          `En vídeos >${longMin} min no se comprime a ${maxMb} MB: se sube en alta calidad.`,
-        ].join('\n'),
-      },
-      {
-        name: 'Plataformas soportadas',
+        name: 'Sitios que acepta',
         value: providers || supportedLabels(),
       },
       {
-        name: 'Límites y entrega',
+        name: 'Calidad (opcional)',
         value: [
-          `Duración máxima (todos los proveedores): **${maxMin} min**`,
-          `≤ **${longMin} min** → adjunto Discord comprimido (máx. **${maxMb} MB**)`,
-          config.r2Enabled
-            ? `> **${longMin} min** → Cloudflare R2 en alta calidad + player inline en Discord`
-            : `> **${longMin} min** → requiere R2 configurado en el servidor`,
+          `**auto** — equilibrado (por defecto)`,
+          `**alta** — se ve mejor, tarda más (vídeos cortos)`,
+          `**rapida** — más rápido, un poco peor (vídeos cortos)`,
+          '',
+          `Si el vídeo dura **más de ${longMin} minutos**, da igual la calidad que elijas: se guarda en la máxima calidad posible y se reproduce con un reproductor en el chat (no se aprieta a ${maxMb} MB).`,
         ].join('\n'),
       },
       {
-        name: 'Limpieza',
+        name: 'Cuánto puede durar y cómo llega',
         value: [
-          `Temp del VPS: se borra la carpeta de cada job al terminar; residuos >**${config.tempMaxAgeHours} h** se barren`,
+          `Máximo **${maxMin} minutos** (cualquier sitio).`,
+          '',
+          `**${longMin} min o menos** → el bot lo comprime y lo **adjunta** al mensaje (límite Discord ≈ **${maxMb} MB**). Ese archivo no queda guardado en la nube del bot.`,
+          '',
           config.r2Enabled
-            ? `R2: no se borra por tiempo — FIFO al acercarse a **${r2Gb} GB** (tope gratis ~10 GB)`
+            ? `**Más de ${longMin} min** → se sube a un alojamiento (R2) en **alta calidad** y Discord muestra el vídeo debajo. Vale para **todos** los sitios, no solo YouTube.`
+            : `**Más de ${longMin} min** → hace falta tener el alojamiento largo activado en el servidor.`,
+        ].join('\n'),
+      },
+      {
+        name: 'Cola (si hay mucha gente)',
+        value:
+          'Solo se procesa **un** vídeo a la vez. Si varias personas piden a la vez, entras en cola y verás tu posición hasta que te toque.',
+      },
+      {
+        name: 'Borrado / espacio (sin tecnicismos)',
+        value: [
+          `**Vídeos cortos (adjunto ≤${longMin} min):** al terminar, el bot borra su copia temporal del servidor. Si algo se queda colgado, se limpia solo a las **${tempH} horas**. En el chat el mensaje con el vídeo **no** se borra solo.`,
+          '',
+          config.r2Enabled
+            ? `**Vídeos largos (R2, >${longMin} min):** no caducan por días. Cuando el almacén se acerca a **~${r2Gb} GB**, se borran primero los **más antiguos** para hacer sitio a los nuevos (como una estantería que se limpia desde atrás).`
             : null,
         ]
           .filter(Boolean)
@@ -72,11 +79,11 @@ async function execute(interaction) {
       },
       {
         name: 'Ejemplo',
-        value: '`/video url:https://www.youtube.com/watch?v=... calidad:alta`',
+        value: '`/video url:https://www.youtube.com/watch?v=...`',
       }
     )
     .setFooter({
-      text: 'TikTok/Instagram sin cookies cuando hace falta · YouTube edad puede requerir COOKIES_FILE · by Wanikoko',
+      text: 'by Wanikoko',
     });
 
   await interaction.reply({ embeds: [embed], ephemeral: true });

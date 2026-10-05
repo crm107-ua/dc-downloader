@@ -51,10 +51,18 @@ function getConfig() {
   const maxStorageGb =
     Number.isFinite(r2MaxStorageGb) && r2MaxStorageGb > 0 ? r2MaxStorageGb : 9;
 
+  const offlineRaw = String(process.env.BOT_OFFLINE || process.env.MAINTENANCE_MODE || '')
+    .trim()
+    .toLowerCase();
+  const botOffline =
+    offlineRaw === '1' || offlineRaw === 'true' || offlineRaw === 'yes' || offlineRaw === 'on';
+
   return {
     token: process.env.DISCORD_BOT_TOKEN,
     clientId: process.env.DISCORD_CLIENT_ID,
     allowedGuildIds: uniqueGuildIds,
+    // Manual maintenance: replies "Servidor apagado…" to all slash commands.
+    botOffline,
     cookiesFile: process.env.COOKIES_FILE || '',
     cookiesFromBrowser: process.env.COOKIES_FROM_BROWSER || '',
     maxDurationSeconds,

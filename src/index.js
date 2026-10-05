@@ -1,8 +1,14 @@
 require('dotenv').config();
 
-const { Client, Events, GatewayIntentBits } = require('discord.js');
+const { Client, Events, GatewayIntentBits, ActivityType } = require('discord.js');
 const { getConfig, isGuildAllowed, isGuildAllowlistEnabled } = require('./config');
 const { registerCommands, registerCommandsForGuild } = require('./register-commands');
+const { snapshot: queueSnapshot } = require('./services/jobQueue');
+const {
+  isBotUnavailable,
+  getOfflineMessage,
+  markShuttingDown,
+} = require('./utils/botAvailability');
 const videoCommand = require('./commands/video');
 const helpCommand = require('./commands/help');
 
@@ -13,6 +19,16 @@ const commands = {
 
 const DENIED_MSG =
   'Este bot solo puede usarse en servidores autorizados. Este servidor no está en la lista permitida.';
+
+async function replyUnavailable(interaction) {
+  const content = getOfflineMessage();
+  const payload = { content, ephemeral: true };
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply({ content, embeds: [], components: [] }).catch(() => {});
+  } else {
+    await interaction.reply(payload).catch(() => {});
+  }
+}
 
 async function leaveUnauthorizedGuild(guild, reason) {
   console.warn(`[guard] leaving guild ${guild.id} (${guild.name || 'unknown'}): ${reason}`);
@@ -37,14 +53,66 @@ async function main() {
     console.log('Servidores permitidos: todos (DISCORD_ALLOWED_GUILD_IDS vacío)');
   }
 
+  if (config.botOffline) {
+    console.warn(`[availability] BOT_OFFLINE activo → "${getOfflineMessage()}"`);
+  }
+
   await registerCommands();
 
   const client = new Client({
     intents: [GatewayIntentBits.Guilds],
   });
 
+  let exitStarted = false;
+  async function gracefulExit(signal) {
+    if (exitStarted) return;
+    exitStarted = true;
+    markShuttingDown(signal);
+
+    try {
+      client.user?.setPresence({
+        status: 'dnd',
+        activities: [{ name: 'Servidor apagado', type: ActivityType.Watching }],
+      });
+    } catch {
+      // ignore
+    }
+
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline) {
+      const q = queueSnapshot();
+      if (!q.active && q.waiting === 0) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    try {
+      client.destroy();
+    } catch {
+      // ignore
+    }
+    process.exit(0);
+  }
+
+  process.once('SIGTERM', () => {
+    gracefulExit('SIGTERM').catch(() => process.exit(0));
+  });
+  process.once('SIGINT', () => {
+    gracefulExit('SIGINT').catch(() => process.exit(0));
+  });
+
   client.once(Events.ClientReady, async (c) => {
     console.log(`Listo como ${c.user.tag}`);
+
+    if (isBotUnavailable()) {
+      try {
+        await c.user.setPresence({
+          status: 'dnd',
+          activities: [{ name: 'Servidor apagado', type: ActivityType.Watching }],
+        });
+      } catch {
+        // ignore
+      }
+    }
 
     if (!restricted) return;
 
@@ -74,6 +142,11 @@ async function main() {
 
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
+
+    if (isBotUnavailable()) {
+      await replyUnavailable(interaction);
+      return;
+    }
 
     if (!interaction.guildId || !isGuildAllowed(interaction.guildId, config)) {
       const payload = { content: DENIED_MSG, ephemeral: true };

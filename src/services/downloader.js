@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
+const { execFileSync } = require('child_process');
 const { getConfig } = require('../config');
 const { resolveProviderByUrl } = require('../providers');
 const { run, compressToLimit, prepareForHostedDelivery, probeDuration, normalizeQualityMode } = require('./compressor');
@@ -12,6 +13,34 @@ const {
   enforceStorageBudget,
 } = require('./r2Storage');
 const { mapRange } = require('../utils/progress');
+
+let aria2cAvailable = null;
+function hasAria2c() {
+  if (aria2cAvailable != null) return aria2cAvailable;
+  try {
+    execFileSync('aria2c', ['-v'], { stdio: 'ignore', windowsHide: true });
+    aria2cAvailable = true;
+  } catch {
+    aria2cAvailable = false;
+  }
+  return aria2cAvailable;
+}
+
+/** YouTube/googlevideo often returns HTTP 403 to aria2c multi-connection downloads. */
+function canUseAria2cForUrl(url, providerId = '') {
+  if (!hasAria2c()) return false;
+  if (providerId === 'youtube') return false;
+  const u = String(url || '').toLowerCase();
+  if (
+    u.includes('googlevideo.com') ||
+    u.includes('youtube.com') ||
+    u.includes('youtu.be') ||
+    u.includes('youtube-nocookie.com')
+  ) {
+    return false;
+  }
+  return true;
+}
 
 function ensureTempDir(tempDir) {
   const absolute = path.resolve(tempDir);
@@ -181,6 +210,10 @@ async function downloadRaw(
 ) {
   const isPhoto = downloadOptions.mediaKind === 'photo';
   const hostedDelivery = Boolean(downloadOptions.hostedDelivery);
+  const providerId = provider && provider.id ? provider.id : '';
+  // YouTube googlevideo often 403s with multi-connection / aria2c — keep serial.
+  const serialDownload =
+    Boolean(downloadOptions.forceSerialDownload) || providerId === 'youtube';
   const args = [
     '--no-playlist',
     '--no-warnings',
@@ -188,8 +221,20 @@ async function downloadRaw(
     '--progress',
     '--no-write-subs',
     '--no-write-auto-subs',
+    '-N',
+    serialDownload
+      ? '1'
+      : hostedDelivery || (Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 300)
+        ? '16'
+        : '8',
     ...providerExtraArgs(provider, downloadOptions),
   ];
+  if (canUseAria2cForUrl(url, providerId)) {
+    args.push('--downloader', 'aria2c', '--downloader-args', 'aria2c:-x16 -s16 -k1M');
+  }
+  if (downloadOptions.ytdlpExtractorArgs) {
+    args.push('--extractor-args', String(downloadOptions.ytdlpExtractorArgs));
+  }
 
   if (!isPhoto) {
     args.push(
@@ -241,16 +286,118 @@ function isImagePath(filePath) {
 
 async function downloadDirectUrl(directUrl, destPath, onDownloadPercent, requestHeaders = null) {
   const headers =
-    requestHeaders && typeof requestHeaders === 'object' ? { ...requestHeaders } : undefined;
-  const res = await fetch(directUrl, { redirect: 'follow', headers });
+    requestHeaders && typeof requestHeaders === 'object' ? { ...requestHeaders } : null;
+
+  // 1) aria2c multi-connection — fast on publisher CDNs (not YouTube/googlevideo).
+  if (canUseAria2cForUrl(directUrl)) {
+    try {
+      const dir = path.dirname(destPath);
+      const name = path.basename(destPath);
+      const args = [
+        '-x',
+        '16',
+        '-s',
+        '16',
+        '-k',
+        '1M',
+        '-j',
+        '16',
+        '--file-allocation=none',
+        '--allow-overwrite=true',
+        '--auto-file-renaming=false',
+        '--console-log-level=warn',
+        '--summary-interval=1',
+        '-d',
+        dir,
+        '-o',
+        name,
+      ];
+      if (headers) {
+        for (const [key, value] of Object.entries(headers)) {
+          if (key && value != null) args.push('--header', `${key}: ${value}`);
+        }
+      }
+      args.push(directUrl);
+      if (typeof onDownloadPercent === 'function') onDownloadPercent(5);
+      await run('aria2c', args, { timeoutMs: 45 * 60 * 1000 });
+      if (fs.existsSync(destPath) && fs.statSync(destPath).size > 0) {
+        if (typeof onDownloadPercent === 'function') onDownloadPercent(100);
+        return;
+      }
+    } catch (ariaErr) {
+      console.warn(`[direct] aria2c falló: ${ariaErr.message || ariaErr}`);
+    }
+  }
+
+  // 2) yt-dlp native (aria2c only for non-YouTube URLs)
+  const args = [
+    '--no-warnings',
+    '--newline',
+    '--no-playlist',
+    '--progress',
+    '-N',
+    '16',
+    '-o',
+    destPath,
+    '--no-part',
+  ];
+  if (canUseAria2cForUrl(directUrl)) {
+    args.push('--downloader', 'aria2c', '--downloader-args', 'aria2c:-x16 -s16 -k1M');
+  }
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      if (key && value != null) args.push('--add-header', `${key}:${value}`);
+    }
+  }
+  args.push(directUrl);
+
+  try {
+    await run('yt-dlp', args, {
+      timeoutMs: 45 * 60 * 1000,
+      onStdout: (text) => {
+        const pct = parseYtDlpPercent(text);
+        if (pct != null && typeof onDownloadPercent === 'function') onDownloadPercent(pct);
+      },
+    });
+    if (!fs.existsSync(destPath) || fs.statSync(destPath).size <= 0) {
+      throw new Error('yt-dlp no escribió el archivo directo.');
+    }
+    if (typeof onDownloadPercent === 'function') onDownloadPercent(100);
+    return;
+  } catch (ytErr) {
+    console.warn(`[direct] yt-dlp falló, usando fetch: ${ytErr.message || ytErr}`);
+  }
+
+  const res = await fetch(directUrl, {
+    redirect: 'follow',
+    headers: headers || undefined,
+  });
   if (!res.ok) {
     throw new Error(`Descarga directa falló (HTTP ${res.status}).`);
   }
-  const buffer = Buffer.from(await res.arrayBuffer());
-  if (!buffer.length) {
+  if (!res.body) {
+    throw new Error('La descarga directa no devolvió cuerpo.');
+  }
+
+  const { Readable } = require('stream');
+  const { pipeline } = require('stream/promises');
+  const total = Number(res.headers.get('content-length') || 0);
+  let received = 0;
+  let lastPct = -1;
+  const nodeIn = Readable.fromWeb(res.body);
+  nodeIn.on('data', (chunk) => {
+    received += chunk.length;
+    if (!total || typeof onDownloadPercent !== 'function') return;
+    const pct = Math.min(99, Math.floor((received / total) * 100));
+    if (pct !== lastPct) {
+      lastPct = pct;
+      onDownloadPercent(pct);
+    }
+  });
+  await pipeline(nodeIn, fs.createWriteStream(destPath));
+  if (!fs.existsSync(destPath) || fs.statSync(destPath).size <= 0) {
     throw new Error('La descarga directa no devolvió datos.');
   }
-  fs.writeFileSync(destPath, buffer);
   if (typeof onDownloadPercent === 'function') onDownloadPercent(100);
 }
 
@@ -263,6 +410,18 @@ function fallbackDestPath(jobDir, jobId, fb) {
   }
   if (!ext.startsWith('.')) ext = `.${ext}`;
   return path.join(jobDir, `${jobId}${ext}`);
+}
+
+function isYoutubeAgeGateError(err) {
+  return /Sign in to confirm your age|inappropriate for some users|age-restricted|LOGIN_REQUIRED/i.test(
+    String((err && err.message) || err || '')
+  );
+}
+
+function isYoutubeStream403Error(err) {
+  return /unable to download video data:\s*HTTP Error 403|HTTP Error 403:\s*Forbidden/i.test(
+    String((err && err.message) || err || '')
+  );
 }
 
 async function resolveFallbackMedia(provider, resolvedUrl) {
@@ -351,24 +510,55 @@ async function runYtdlpVideoPipeline({
       );
       rawPath = findDownloadedFile(jobDir, jobId);
     } catch (err) {
-      if (typeof provider.fetchFallbackMedia !== 'function') throw err;
-      console.warn(`[${platform}] yt-dlp download failed, trying fallback: ${err.message || err}`);
-      const fb = await resolveFallbackMedia(provider, resolvedUrl);
-      if (fb.durationSeconds != null) {
-        assertDuration({ duration: fb.durationSeconds }, durationCap);
+      // YouTube stream 403: retry once (serial + alternate clients). Do NOT fall back to
+      // Innertube googlevideo URLs — those also 403 and surface as "Descarga directa 403".
+      if (platform === 'youtube' && isYoutubeStream403Error(err)) {
+        console.warn(`[youtube] stream 403, retrying once (serial, default clients)...`);
+        try {
+          await downloadRaw(
+            resolvedUrl,
+            provider,
+            outTemplate,
+            config,
+            (dlPct) => {
+              onProgress(mapRange(dlPct, 8, 72), 'download');
+            },
+            preDuration,
+            {
+              ...downloadOptions,
+              forceSerialDownload: true,
+            }
+          );
+          rawPath = findDownloadedFile(jobDir, jobId);
+        } catch (retryErr) {
+          throw new Error(
+            `YouTube bloqueó la descarga del stream (403). Prueba de nuevo en unos minutos.`
+          );
+        }
+      } else if (
+        typeof provider.fetchFallbackMedia === 'function' &&
+        (platform !== 'youtube' || isYoutubeAgeGateError(err))
+      ) {
+        console.warn(`[${platform}] yt-dlp download failed, trying fallback: ${err.message || err}`);
+        const fb = await resolveFallbackMedia(provider, resolvedUrl);
+        if (fb.durationSeconds != null) {
+          assertDuration({ duration: fb.durationSeconds }, durationCap);
+        }
+        meta = { title: fb.title, id: fb.id || meta.id || jobId, duration: fb.durationSeconds };
+        fallbackAnalysis = { hadWatermarkOnly: Boolean(fb.hadWatermarkOnly) };
+        rawPath = fallbackDestPath(jobDir, jobId, fb);
+        await downloadDirectUrl(
+          fb.directUrl,
+          rawPath,
+          (dlPct) => {
+            onProgress(mapRange(dlPct, 8, 72), 'download');
+          },
+          fb.requestHeaders || null
+        );
+        usedFallback = fb;
+      } else {
+        throw err;
       }
-      meta = { title: fb.title, id: fb.id || meta.id || jobId, duration: fb.durationSeconds };
-      fallbackAnalysis = { hadWatermarkOnly: Boolean(fb.hadWatermarkOnly) };
-      rawPath = fallbackDestPath(jobDir, jobId, fb);
-      await downloadDirectUrl(
-        fb.directUrl,
-        rawPath,
-        (dlPct) => {
-          onProgress(mapRange(dlPct, 8, 72), 'download');
-        },
-        fb.requestHeaders || null
-      );
-      usedFallback = fb;
     }
   }
 
@@ -445,7 +635,7 @@ async function downloadAndPrepare(url, options = {}) {
           );
         }
       } catch {
-        // Pipeline will fetch metadata again / fallback
+        // Age-gate / login: pipeline fallback still probes duration after download for R2.
       }
     }
 
@@ -512,7 +702,7 @@ async function downloadAndPrepare(url, options = {}) {
     if (useR2) {
       const hostedPath = path.join(jobDir, `${jobId}-hosted.mp4`);
       await onProgress(72, 'compress');
-      console.log(`[${platform}] preparing R2 delivery (${probed.toFixed(1)}s, skip compress if H.264)...`);
+      console.log(`[${platform}] preparing R2 delivery (${probed.toFixed(1)}s, max quality)...`);
       const prepared = await prepareForHostedDelivery(rawPath, hostedPath, (ratio) => {
         onProgress(mapRange(ratio, 72, 88), 'compress');
       });

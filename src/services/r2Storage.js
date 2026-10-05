@@ -12,8 +12,8 @@ const {
   DeleteObjectsCommand,
   DeleteObjectCommand,
   PutObjectCommand,
+  HeadObjectCommand,
 } = require('@aws-sdk/client-s3');
-const { Upload } = require('@aws-sdk/lib-storage');
 
 function createR2Client(config) {
   return new S3Client({
@@ -111,35 +111,50 @@ async function uploadFile(config, localPath, key, options = {}) {
     CacheControl: 'public, max-age=3600',
   };
 
-  // Multipart Upload can hang on some R2 setups; use simple Put for typical sizes.
-  if (sizeBytes <= 95 * 1024 * 1024) {
-    if (typeof options.onProgress === 'function') options.onProgress(5);
-    const body = fs.createReadStream(localPath);
-    await client.send(
-      new PutObjectCommand({
-        ...common,
-        Body: body,
-        ContentLength: sizeBytes,
-      })
+  // R2 multipart Upload hangs on this host — use single PutObject for Discord-sized files
+  // (S3/R2 allow PutObject up to 5 GB).
+  const PUT_MAX = 512 * 1024 * 1024;
+  if (sizeBytes > PUT_MAX) {
+    throw new Error(
+      `Archivo R2 demasiado grande (${(sizeBytes / 1024 / 1024).toFixed(0)} MB). Re-encodea bajo ~200 MB.`
     );
-    if (typeof options.onProgress === 'function') options.onProgress(100);
-  } else {
-    const body = fs.createReadStream(localPath);
-    const upload = new Upload({
-      client,
-      params: { ...common, Body: body },
-      queueSize: 4,
-      partSize: 16 * 1024 * 1024,
-      leavePartsOnError: false,
-    });
-    if (typeof options.onProgress === 'function') {
-      upload.on('httpUploadProgress', (prog) => {
-        if (!prog || !prog.total) return;
-        const pct = Math.min(100, (prog.loaded / prog.total) * 100);
-        options.onProgress(pct);
-      });
+  }
+  if (typeof options.onProgress === 'function') options.onProgress(5);
+  const body = fs.createReadStream(localPath);
+  await client.send(
+    new PutObjectCommand({
+      ...common,
+      Body: body,
+      ContentLength: sizeBytes,
+    })
+  );
+  if (typeof options.onProgress === 'function') options.onProgress(100);
+
+  // Verify object exists before handing Discord a URL (avoids 404 / no player).
+  try {
+    const head = await client.send(
+      new HeadObjectCommand({ Bucket: config.r2Bucket, Key: key })
+    );
+    if (!head || !head.ContentLength) {
+      throw new Error('R2 HeadObject vacío tras subir.');
     }
-    await upload.done();
+  } catch (err) {
+    throw new Error(
+      `La subida a R2 no dejó el archivo accesible (${err && err.message ? err.message : err}).`
+    );
+  }
+
+  const publicUrl = publicObjectUrl(config, key);
+  // Public probe — Discord needs a 200 + video/mp4 to unfurl the player.
+  try {
+    const probe = await fetch(publicUrl, { method: 'HEAD', redirect: 'follow' });
+    if (!probe.ok) {
+      throw new Error(`URL pública R2 respondió HTTP ${probe.status}`);
+    }
+  } catch (err) {
+    throw new Error(
+      `El archivo está en R2 pero la URL pública no responde (${err && err.message ? err.message : err}).`
+    );
   }
 
   // FIFO eviction so free-tier usage stays under the soft cap (default 9 GB of 10 GB).
@@ -150,7 +165,7 @@ async function uploadFile(config, localPath, key, options = {}) {
 
   return {
     key,
-    publicUrl: publicObjectUrl(config, key),
+    publicUrl,
     sizeBytes,
     fifo,
   };

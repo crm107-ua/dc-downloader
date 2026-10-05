@@ -6,7 +6,10 @@ function formatDownloadError(raw) {
 
   // Match known cases on the raw string first (cookie boilerplate shares the same line).
   if (/Sign in to confirm your age|may be inappropriate for some users/i.test(original)) {
-    return 'YouTube pide confirmación de edad para este vídeo. Configura COOKIES_FILE en el servidor con una sesión de YouTube.';
+    return 'YouTube bloquea este vídeo por edad. Se intentó fuente alternativa automáticamente; si falló, el vídeo no tiene CDN/público disponible.';
+  }
+  if (/no hay fuente alternativa pública/i.test(original)) {
+    return 'YouTube bloquea este vídeo por edad o restricción y no hay fuente alternativa pública.';
   }
   if (/comfortable for some audiences|Log in for access/i.test(original)) {
     return 'TikTok no permite descargar este vídeo (contenido restringido o privado).';
@@ -53,6 +56,9 @@ function formatDownloadError(raw) {
     .join('\n')
     .trim();
 
+  if (/Descarga directa falló \(HTTP 403\)|unable to download video data:\s*HTTP Error 403|YouTube bloqueó la descarga del stream \(403\)/i.test(original)) {
+    return 'YouTube bloqueó temporalmente la descarga (403). Espera un momento y vuelve a intentarlo.';
+  }
   if (/HTTP Error 403:\s*Blocked|Unable to download webpage: HTTP Error 403/i.test(msg)) {
     return 'El servidor de media bloqueó la descarga (403). Prueba de nuevo o con otro enlace.';
   }
