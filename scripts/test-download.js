@@ -121,7 +121,8 @@ async function testOne(fixture) {
     playlistItem: fixture.playlistItem,
     mediaKind: fixture.mediaKind,
   });
-  const okSize = result.sizeBytes <= config.maxFileSizeBytes;
+  const isR2 = result.delivery === 'r2';
+  const okSize = isR2 || result.sizeBytes <= config.maxFileSizeBytes;
   const okDuration =
     result.mediaType === 'image' || result.durationSeconds <= config.maxDurationSeconds;
 
@@ -132,7 +133,11 @@ async function testOne(fixture) {
     console.log(`size: ${mb(result.sizeBytes)} MB (limit ${config.maxFileSizeMb} MB) ${okSize ? 'OK' : 'FAIL'}`);
   } else {
     console.log(`duration: ${result.durationSeconds.toFixed(1)}s (limit ${config.maxDurationSeconds}s) ${okDuration ? 'OK' : 'FAIL'}`);
-    console.log(`size: ${mb(result.sizeBytes)} MB (limit ${config.maxFileSizeMb} MB) ${okSize ? 'OK' : 'FAIL'}`);
+    if (isR2) {
+      console.log(`size: ${mb(result.sizeBytes)} MB (R2 hosted, no Discord attach limit) OK`);
+    } else {
+      console.log(`size: ${mb(result.sizeBytes)} MB (limit ${config.maxFileSizeMb} MB) ${okSize ? 'OK' : 'FAIL'}`);
+    }
   }
   if (fixture.name === 'tiktok') {
     console.log(
@@ -140,7 +145,24 @@ async function testOne(fixture) {
     );
   }
 
-  // Keep a copy for manual inspection
+  // Keep a copy for manual inspection (attachment path only; R2 keeps no local filePath).
+  if (result.delivery === 'r2' && result.publicUrl) {
+    console.log(`delivery: r2`);
+    console.log(`publicUrl: ${result.publicUrl}`);
+    result.cleanup();
+    if (!okDuration) {
+      throw new Error(`${fixture.name} failed duration check`);
+    }
+    return {
+      name: fixture.name,
+      sizeBytes: result.sizeBytes,
+      durationSeconds: result.durationSeconds,
+      mediaType: result.mediaType || 'video',
+      dest: result.publicUrl,
+      delivery: 'r2',
+    };
+  }
+
   const outDir = path.resolve('temp', 'test-out');
   fs.mkdirSync(outDir, { recursive: true });
   const ext = result.mediaType === 'image' ? path.extname(result.filePath) || '.jpg' : '.mp4';
