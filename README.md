@@ -86,7 +86,7 @@ Aplica a **todos** los proveedores.
 
 ### Spotify
 
-Solo **tracks** (`open.spotify.com/track/…`). Resuelve videoclip (Spotify → YouTube), comprime a ≤10 MB. Sin videoclip → mensaje breve al usuario.
+Solo **tracks** (`open.spotify.com/track/…`). Resuelve videoclip (Spotify → YouTube: MV oficial o upload `Artista - Título`; no lyrics/audio), comprime a ≤10 MB. Sin videoclip → mensaje breve al usuario.
 
 Si Discord aún muestra comandos antiguos, reinicia el bot o ejecuta `npm run register`.
 
@@ -355,7 +355,7 @@ dc-downloader/
 | **TikTok** | `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com` | Prefer `play_addr` / `h264_*` / `bytevc1_*`; evita el fallback watermarked `download` | No requerida | `normalizeUrl` limpia query; `extraArgs` usa `--impersonate chrome` + app móvil; si yt-dlp falla (p. ej. contenido restringido), `fetchFallbackMedia` resuelve CDN sin cookies |
 | **Instagram** | `instagram.com`, `instagr.am` (`/reel/`, `/p/`, `/tv/`, `/share/`) | Progressive `3/2/1` (H.264); evita DASH VP9 | No requerida | `normalizeUrl` limpia tracking; **carruseles** → Select Menu (vídeo/foto); `include_dash=0`; si yt-dlp falla (Restricted / login), `fetchFallbackMedia` (progressive CDN o resolver público) sin cookies |
 | **Facebook** | `facebook.com`, `fb.watch` (`/reel/`, `/watch/`, `/videos/`, shortlinks) | `hd/sd` progressive (H.264) preferido sobre DASH AV1 | No requerida | `normalizeUrl` unifica reel/watch/fb.watch |
-| **Spotify** | `open.spotify.com` `/track/ID` (también `/intl-xx/track/`) | Videoclip vía preview Spotify o YouTube MV | No requerida | Solo tracks; `resolveSource` → adjunto ≤10 MB; álbum/playlist rechazados |
+| **Spotify** | `open.spotify.com` `/track/ID` (también `/intl-xx/track/`) | Videoclip vía preview Spotify o YouTube (MV o `Artista - Título`) | No requerida | Solo tracks; `resolveSource` rechaza lyrics/audio/visualiser; adjunto ≤10 MB; álbum/playlist rechazados |
 
 ---
 

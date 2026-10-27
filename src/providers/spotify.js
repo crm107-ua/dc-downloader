@@ -55,16 +55,28 @@ function normalizeText(s) {
     .trim();
 }
 
-function looksLikeMusicVideo(title) {
+function isRejectedVideoTitle(title) {
   const t = normalizeText(title);
-  if (
-    /\b(official audio|audio oficial|lyrics?|lyric video|letra|audio only|visuali[sz]er|visualiser|visualizer|live session|full set|boiler room)\b/.test(
-      t
-    )
-  ) {
-    return false;
-  }
+  return /\b(official audio|audio oficial|lyrics?|lyric video|letra|audio only|visuali[sz]er|visualiser|visualizer|sped up|slowed|nightcore|8d audio|live session|full set|boiler room|cover|karaoke|reaction|fan made)\b/.test(
+    t
+  );
+}
+
+function looksLikeMusicVideo(title) {
+  if (isRejectedVideoTitle(title)) return false;
+  const t = normalizeText(title);
   return /\b(official music video|official video|video oficial|music video|videoclip|\bmv\b)\b/.test(t);
+}
+
+/** Strong artist+title match without MV keywords (many official uploads are just "ARTIST - Title"). */
+function looksLikePrimaryUpload(title, track) {
+  if (isRejectedVideoTitle(title)) return false;
+  const match = titleMatchesTrack(title, track.title, track.artists);
+  if (!match || !match.ok || !match.artistHit) return false;
+  const yt = normalizeText(title);
+  const trackN = normalizeText(track.title);
+  // Prefer near-exact "artist - title" style over loose word hits.
+  return yt.includes(trackN);
 }
 
 function titleMatchesTrack(ytTitle, trackTitle, artists) {
@@ -148,10 +160,12 @@ async function fetchTrackEntity(trackId) {
 }
 
 const YT_SEARCH_APIS = [
-  (q, n) => `https://pipedapi.adminforge.de/search?q=${encodeURIComponent(q)}&filter=videos`,
-  (q, n) => `https://pipedapi.syncpundit.io/search?q=${encodeURIComponent(q)}&filter=videos`,
-  (q, n) => `https://invidious.jing.rocks/api/v1/search?q=${encodeURIComponent(q)}&type=video`,
-  (q, n) => `https://iv.ggtyler.dev/api/v1/search?q=${encodeURIComponent(q)}&type=video`,
+  (q) => `https://pipedapi.reallyaweso.me/search?q=${encodeURIComponent(q)}&filter=videos`,
+  (q) => `https://pipedapi.nosebs.ru/search?q=${encodeURIComponent(q)}&filter=videos`,
+  (q) => `https://pipedapi.adminforge.de/search?q=${encodeURIComponent(q)}&filter=videos`,
+  (q) => `https://invidious.nerdvpn.de/api/v1/search?q=${encodeURIComponent(q)}&type=video`,
+  (q) => `https://yewtu.be/api/v1/search?q=${encodeURIComponent(q)}&type=video`,
+  (q) => `https://iv.ggtyler.dev/api/v1/search?q=${encodeURIComponent(q)}&type=video`,
 ];
 
 function normalizeSearchHits(items, limit) {
@@ -225,24 +239,36 @@ async function searchYoutubeCandidates(query, run, limit = 8) {
     .filter((r) => r.id && r.title);
 }
 
+function scoreCandidate(c, track, { mvKeyword, primary }) {
+  const match = titleMatchesTrack(c.title, track.title, track.artists);
+  if (!match || !match.ok) return null;
+  const dur = Number(c.duration);
+  if (Number.isFinite(dur) && (dur < 45 || dur > 900)) return null;
+  let score = primary ? 6 : 10;
+  if (mvKeyword) score += 8;
+  if (match.artistHit) score += 5;
+  if (Number.isFinite(track.durationSeconds) && Number.isFinite(dur)) {
+    const delta = Math.abs(dur - track.durationSeconds);
+    if (delta <= 15) score += 8;
+    else if (delta <= 40) score += 3;
+    else if (delta > 120) score -= 6;
+  }
+  if (/\b(video oficial|official music video|official video)\b/i.test(c.title)) score += 4;
+  return { ...c, score };
+}
+
 function pickBestMusicVideo(candidates, track) {
   const scored = [];
   for (const c of candidates) {
-    if (!looksLikeMusicVideo(c.title)) continue;
-    const match = titleMatchesTrack(c.title, track.title, track.artists);
-    if (!match || !match.ok) continue;
-    const dur = Number(c.duration);
-    if (Number.isFinite(dur) && (dur < 45 || dur > 900)) continue;
-    let score = 10;
-    if (match.artistHit) score += 5;
-    if (Number.isFinite(track.durationSeconds) && Number.isFinite(dur)) {
-      const delta = Math.abs(dur - track.durationSeconds);
-      if (delta <= 15) score += 8;
-      else if (delta <= 40) score += 3;
-      else if (delta > 120) score -= 6;
+    if (looksLikeMusicVideo(c.title)) {
+      const row = scoreCandidate(c, track, { mvKeyword: true, primary: false });
+      if (row) scored.push(row);
+      continue;
     }
-    if (/\b(video oficial|official music video|official video)\b/i.test(c.title)) score += 4;
-    scored.push({ ...c, score });
+    if (looksLikePrimaryUpload(c.title, track)) {
+      const row = scoreCandidate(c, track, { mvKeyword: false, primary: true });
+      if (row) scored.push(row);
+    }
   }
   scored.sort((a, b) => b.score - a.score);
   return scored[0] || null;
@@ -282,6 +308,8 @@ async function resolveSource(rawUrl, ctx = {}) {
     artist ? `${artist} - ${track.title} official music video` : `${track.title} official music video`,
     artist ? `${artist} ${track.title} video oficial` : `${track.title} video oficial`,
     artist ? `${artist} ${track.title} music video` : `${track.title} music video`,
+    // Many official uploads omit "music video" in the title.
+    artist ? `${artist} - ${track.title}` : track.title,
   ];
 
   for (const q of queries) {
@@ -344,6 +372,8 @@ module.exports._test = {
   extractTrackId,
   assertTrackUrl,
   looksLikeMusicVideo,
+  looksLikePrimaryUpload,
+  isRejectedVideoTitle,
   normalizeText,
   pickBestMusicVideo,
 };
