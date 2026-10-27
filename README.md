@@ -1,6 +1,6 @@
 # DC Downloader
 
-Bot de Discord que descarga videos cortos de **X**, **Reddit**, **YouTube**, **TikTok**, **Instagram** y **Facebook**, los comprime bajo un límite estricto de tamaño y los publica en el mismo canal.
+Bot de Discord que descarga videos cortos de **X**, **Reddit**, **YouTube**, **TikTok**, **Instagram**, **Facebook** y **Spotify** (videoclip de un track), los comprime bajo un límite estricto de tamaño y los publica en el mismo canal.
 
 Diseñado para ser **claro de usar**, **configurable por servidor** (allowlist opcional) y **fácil de extender** con nuevos proveedores.
 
@@ -32,7 +32,7 @@ Diseñado para ser **claro de usar**, **configurable por servidor** (allowlist o
 |---------|---------|
 | Entrada | Slash command `/video` con una URL |
 | Plataformas | Registry en `src/providers/` |
-| Duración máxima | Antes de descargar (`MAX_DURATION_SECONDS`, defecto **600 s**) |
+| Duración máxima | Antes de descargar (`MAX_DURATION_SECONDS`, defecto **1800 s**) |
 | Tamaño máximo | MP4 enviado (`MAX_FILE_SIZE_MB`, defecto **10 MB**) |
 | Calidad | Opción `calidad`: `auto` (defecto) · `alta` · `rapida` |
 | Concurrencia | Cola global: un job activo; el resto espera con posición visible |
@@ -64,7 +64,7 @@ Guía corta de uso: [`USO.md`](USO.md).
 
 | Comando | Descripción |
 |---------|-------------|
-| `/video url:<enlace> [calidad]` | Descarga, comprime y envía el video |
+| `/video url:<enlace> [calidad] [descripcion]` | Descarga, comprime y envía el video |
 | `/help` | Ayuda (mensaje ephemeral) |
 
 ### Opción `calidad`
@@ -76,6 +76,17 @@ Guía corta de uso: [`USO.md`](USO.md).
 | `rapida` | Encode rápido, menor calidad percibida |
 
 Aplica a **todos** los proveedores.
+
+### Opción `descripcion`
+
+| Valor | Comportamiento |
+|-------|----------------|
+| `True` | Incluye el texto del post (p. ej. el tuit) en la card, encima del vídeo |
+| `False` / omitida | Solo card del usuario + media |
+
+### Spotify
+
+Solo **tracks** (`open.spotify.com/track/…`). Resuelve videoclip (Spotify → YouTube), comprime a ≤10 MB. Sin videoclip → mensaje breve al usuario.
 
 Si Discord aún muestra comandos antiguos, reinicia el bot o ejecuta `npm run register`.
 
@@ -287,7 +298,8 @@ Sin Discord, valida descarga + límites:
 ```bash
 npm run test:download
 npm run test:download -- youtube
-npm run test:download -- tiktok
+npm run test:e2e                 # Spotify + Reddit
+npm run test:e2e -- spotify_amor
 ```
 
 Salida en `TEMP_DIR/test-out/`.
@@ -305,7 +317,8 @@ dc-downloader/
 ├── ecosystem.config.js       # PM2
 ├── package.json
 ├── scripts/
-│   └── test-download.js
+│   ├── test-download.js
+│   └── e2e-smoke.js          # Spotify / Reddit sin Discord
 └── src/
     ├── index.js              # Entrada del bot
     ├── register-commands.js  # Slash commands por guild
@@ -317,14 +330,17 @@ dc-downloader/
     │   ├── contract.js
     │   ├── index.js          # Registry
     │   ├── formats.js
-    │   ├── x.js | reddit.js | youtube.js | tiktok.js | instagram.js | facebook.js
+    │   └── x | reddit | youtube | tiktok | instagram | facebook | spotify
     ├── services/
     │   ├── downloader.js
     │   ├── compressor.js
+    │   ├── r2Storage.js
     │   ├── jobQueue.js
     │   └── tempCleanup.js
     └── utils/
-        └── progress.js
+        ├── progress.js
+        ├── bins.js
+        └── downloadError.js
 ```
 
 ---
@@ -334,11 +350,12 @@ dc-downloader/
 | Plataforma | Hosts / URLs | Formato fuente | Auth | Comportamiento específico |
 |------------|--------------|----------------|------|---------------------------|
 | **X / Twitter** | `x.com`, `twitter.com` | `FAST_FORMAT` (≤1080p, H.264/MP4 preferido) | Opcional (`COOKIES_*`) si el post está restringido | Sin `normalizeUrl` ni `extraArgs` propios |
-| **Reddit** | `reddit.com`, `old.reddit.com`, `redd.it` | `FAST_FORMAT` | No requerida | `normalizeUrl` limpia tracking; si yt-dlp falla en GIFs/imágenes de `i.redd.it` (403), `fetchFallbackMedia` baja el media directo |
+| **Reddit** | `reddit.com`, `old.reddit.com`, `redd.it` (posts y shortlinks `/s/`) | `FAST_FORMAT` | No requerida | `normalizeUrl` limpia tracking. Si la API JSON de Reddit devuelve la página anti-bot, `fetchFallbackMedia` resuelve el post y baja el DASH de `v.redd.it` (vídeo+audio) o la imagen directa. GIFs/imágenes de `i.redd.it` con 403 siguen el mismo fallback |
 | **YouTube** | `youtube.com`, `youtu.be`, `youtube-nocookie.com` (watch, Shorts, embed, live) | `YOUTUBE_FORMAT` (≤1080p / 60 fps, AVC+M4A) | Age-gate: `fetchFallbackMedia` (Innertube / Piped-Invidious / CDN oficial p.ej. Rockstar) sin cookies | `normalizeUrl` unifica a `watch?v=`; yt-dlp clients por defecto |
 | **TikTok** | `tiktok.com`, `vm.tiktok.com`, `vt.tiktok.com` | Prefer `play_addr` / `h264_*` / `bytevc1_*`; evita el fallback watermarked `download` | No requerida | `normalizeUrl` limpia query; `extraArgs` usa `--impersonate chrome` + app móvil; si yt-dlp falla (p. ej. contenido restringido), `fetchFallbackMedia` resuelve CDN sin cookies |
 | **Instagram** | `instagram.com`, `instagr.am` (`/reel/`, `/p/`, `/tv/`, `/share/`) | Progressive `3/2/1` (H.264); evita DASH VP9 | No requerida | `normalizeUrl` limpia tracking; **carruseles** → Select Menu (vídeo/foto); `include_dash=0`; si yt-dlp falla (Restricted / login), `fetchFallbackMedia` (progressive CDN o resolver público) sin cookies |
 | **Facebook** | `facebook.com`, `fb.watch` (`/reel/`, `/watch/`, `/videos/`, shortlinks) | `hd/sd` progressive (H.264) preferido sobre DASH AV1 | No requerida | `normalizeUrl` unifica reel/watch/fb.watch |
+| **Spotify** | `open.spotify.com` `/track/ID` (también `/intl-xx/track/`) | Videoclip vía preview Spotify o YouTube MV | No requerida | Solo tracks; `resolveSource` → adjunto ≤10 MB; álbum/playlist rechazados |
 
 ---
 

@@ -3,7 +3,7 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const { execFileSync } = require('child_process');
 const { getConfig } = require('../config');
-const { resolveProviderByUrl } = require('../providers');
+const { resolveProviderByUrl, resolveProviderById } = require('../providers');
 const { run, compressToLimit, prepareForHostedDelivery, probeDuration, normalizeQualityMode } = require('./compressor');
 const { scheduleTempCleanup } = require('./tempCleanup');
 const {
@@ -24,6 +24,11 @@ function hasAria2c() {
     aria2cAvailable = false;
   }
   return aria2cAvailable;
+}
+
+/** DASH/HLS manifests are not media files; aria2c would save the playlist as the output. */
+function isAdaptivePlaylistUrl(url) {
+  return /\.(?:mpd|m3u8)(?:[?#]|$)/i.test(String(url || ''));
 }
 
 /** YouTube/googlevideo often returns HTTP 403 to aria2c multi-connection downloads. */
@@ -211,9 +216,12 @@ async function downloadRaw(
   const isPhoto = downloadOptions.mediaKind === 'photo';
   const hostedDelivery = Boolean(downloadOptions.hostedDelivery);
   const providerId = provider && provider.id ? provider.id : '';
-  // YouTube googlevideo often 403s with multi-connection / aria2c — keep serial.
+  // YouTube googlevideo often 403s with multi-connection / aria2c — keep serial
+  // even when the logical provider is Spotify (MV resolved to a YouTube URL).
   const serialDownload =
-    Boolean(downloadOptions.forceSerialDownload) || providerId === 'youtube';
+    Boolean(downloadOptions.forceSerialDownload) ||
+    providerId === 'youtube' ||
+    isYoutubeUrl(url);
   const args = [
     '--no-playlist',
     '--no-warnings',
@@ -287,9 +295,88 @@ function isImagePath(filePath) {
 async function downloadDirectUrl(directUrl, destPath, onDownloadPercent, requestHeaders = null) {
   const headers =
     requestHeaders && typeof requestHeaders === 'object' ? { ...requestHeaders } : null;
+  const playlist = isAdaptivePlaylistUrl(directUrl);
+  const googleVideo = isYoutubeUrl(directUrl);
+
+  // googlevideo: Node fetch often 403s; yt-dlp serial (-N 1) works when the URL is valid.
+  if (!playlist && googleVideo) {
+    const gvArgs = [
+      '--no-warnings',
+      '--newline',
+      '--no-playlist',
+      '--progress',
+      '-N',
+      '1',
+      '-4',
+      '-o',
+      destPath,
+      '--no-part',
+    ];
+    if (headers) {
+      for (const [key, value] of Object.entries(headers)) {
+        if (key && value != null) gvArgs.push('--add-header', `${key}:${value}`);
+      }
+    }
+    gvArgs.push(directUrl);
+    try {
+      const onChunk = (text) => {
+        const pct = parseYtDlpPercent(text);
+        if (pct != null && typeof onDownloadPercent === 'function') onDownloadPercent(pct);
+      };
+      await run('yt-dlp', gvArgs, {
+        timeoutMs: 45 * 60 * 1000,
+        onStdout: onChunk,
+        onStderr: onChunk,
+      });
+      if (fs.existsSync(destPath) && fs.statSync(destPath).size > 0) {
+        if (typeof onDownloadPercent === 'function') onDownloadPercent(100);
+        return;
+      }
+    } catch (gvErr) {
+      console.warn(`[direct] googlevideo yt-dlp falló: ${gvErr.message || gvErr}`);
+    }
+    // Last resort: plain fetch
+    const res = await fetch(directUrl, {
+      redirect: 'follow',
+      headers: {
+        'User-Agent':
+          headers?.['User-Agent'] ||
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        Referer: headers?.Referer || 'https://www.youtube.com/',
+        ...(headers || {}),
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Descarga directa falló (HTTP ${res.status}).`);
+    }
+    if (!res.body) {
+      throw new Error('La descarga directa no devolvió cuerpo.');
+    }
+    const { Readable } = require('stream');
+    const { pipeline } = require('stream/promises');
+    const total = Number(res.headers.get('content-length') || 0);
+    let received = 0;
+    let lastPct = -1;
+    const nodeIn = Readable.fromWeb(res.body);
+    nodeIn.on('data', (chunk) => {
+      received += chunk.length;
+      if (!total || typeof onDownloadPercent !== 'function') return;
+      const pct = Math.min(99, Math.floor((received / total) * 100));
+      if (pct !== lastPct) {
+        lastPct = pct;
+        onDownloadPercent(pct);
+      }
+    });
+    await pipeline(nodeIn, fs.createWriteStream(destPath));
+    if (!fs.existsSync(destPath) || fs.statSync(destPath).size <= 0) {
+      throw new Error('La descarga directa no devolvió datos.');
+    }
+    if (typeof onDownloadPercent === 'function') onDownloadPercent(100);
+    return;
+  }
 
   // 1) aria2c multi-connection — fast on publisher CDNs (not YouTube/googlevideo).
-  if (canUseAria2cForUrl(directUrl)) {
+  if (!playlist && canUseAria2cForUrl(directUrl)) {
     try {
       const dir = path.dirname(destPath);
       const name = path.basename(destPath);
@@ -329,19 +416,22 @@ async function downloadDirectUrl(directUrl, destPath, onDownloadPercent, request
     }
   }
 
-  // 2) yt-dlp native (aria2c only for non-YouTube URLs)
+  // 2) yt-dlp native (aria2c only for non-YouTube URLs; serial for googlevideo)
   const args = [
     '--no-warnings',
     '--newline',
     '--no-playlist',
     '--progress',
     '-N',
-    '16',
+    googleVideo ? '1' : '16',
     '-o',
     destPath,
     '--no-part',
   ];
-  if (canUseAria2cForUrl(directUrl)) {
+  if (playlist) {
+    // Separate video/audio representations (v.redd.it DASH). Merge to one MP4.
+    args.push('-f', 'bv*+ba/b', '--merge-output-format', 'mp4');
+  } else if (canUseAria2cForUrl(directUrl)) {
     args.push('--downloader', 'aria2c', '--downloader-args', 'aria2c:-x16 -s16 -k1M');
   }
   if (headers) {
@@ -352,12 +442,14 @@ async function downloadDirectUrl(directUrl, destPath, onDownloadPercent, request
   args.push(directUrl);
 
   try {
+    const onChunk = (text) => {
+      const pct = parseYtDlpPercent(text);
+      if (pct != null && typeof onDownloadPercent === 'function') onDownloadPercent(pct);
+    };
     await run('yt-dlp', args, {
       timeoutMs: 45 * 60 * 1000,
-      onStdout: (text) => {
-        const pct = parseYtDlpPercent(text);
-        if (pct != null && typeof onDownloadPercent === 'function') onDownloadPercent(pct);
-      },
+      onStdout: onChunk,
+      onStderr: onChunk,
     });
     if (!fs.existsSync(destPath) || fs.statSync(destPath).size <= 0) {
       throw new Error('yt-dlp no escribió el archivo directo.');
@@ -365,6 +457,7 @@ async function downloadDirectUrl(directUrl, destPath, onDownloadPercent, request
     if (typeof onDownloadPercent === 'function') onDownloadPercent(100);
     return;
   } catch (ytErr) {
+    if (playlist) throw ytErr;
     console.warn(`[direct] yt-dlp falló, usando fetch: ${ytErr.message || ytErr}`);
   }
 
@@ -412,23 +505,95 @@ function fallbackDestPath(jobDir, jobId, fb) {
   return path.join(jobDir, `${jobId}${ext}`);
 }
 
-function isYoutubeAgeGateError(err) {
-  return /Sign in to confirm your age|inappropriate for some users|age-restricted|LOGIN_REQUIRED/i.test(
+function isYoutubeUrl(url) {
+  const u = String(url || '').toLowerCase();
+  return (
+    u.includes('youtube.com') ||
+    u.includes('youtu.be') ||
+    u.includes('youtube-nocookie.com') ||
+    u.includes('googlevideo.com')
+  );
+}
+
+/** Age-gate, bot-check, login wall — all trigger cookieless fallback. */
+function isYoutubeAuthWallError(err) {
+  return /Sign in to confirm you.?re not a bot|Sign in to confirm your age|confirm you.?re not a bot|inappropriate for some users|age-restricted|LOGIN_REQUIRED|Use --cookies|bot check|not a bot\. This helps protect/i.test(
     String((err && err.message) || err || '')
   );
 }
 
 function isYoutubeStream403Error(err) {
-  return /unable to download video data:\s*HTTP Error 403|HTTP Error 403:\s*Forbidden/i.test(
+  return /unable to download video data:\s*HTTP Error 403|HTTP Error 403:\s*Forbidden|Descarga directa falló \(HTTP 403\)/i.test(
     String((err && err.message) || err || '')
   );
 }
 
-async function resolveFallbackMedia(provider, resolvedUrl) {
+async function resolveFallbackMedia(provider, resolvedUrl, extra = {}) {
   if (typeof provider.fetchFallbackMedia !== 'function') {
     throw new Error('Provider sin fallback.');
   }
-  return provider.fetchFallbackMedia(resolvedUrl, { run });
+  return provider.fetchFallbackMedia(resolvedUrl, { run, ...extra });
+}
+
+/**
+ * Try several cookieless candidates until one downloads (datacenter IPs often 403 the first googlevideo URL).
+ */
+async function downloadViaFallbackCandidates({
+  provider,
+  resolvedUrl,
+  jobDir,
+  jobId,
+  onProgress,
+  durationCap,
+  platform,
+}) {
+  const tried = new Set();
+  let lastErr = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    let fb;
+    try {
+      fb = await resolveFallbackMedia(provider, resolvedUrl, { skipUrls: tried });
+    } catch (err) {
+      lastErr = err;
+      break;
+    }
+    if (!fb || !fb.directUrl) {
+      lastErr = new Error('Fallback sin URL directa.');
+      break;
+    }
+    if (tried.has(fb.directUrl)) {
+      lastErr = new Error('Fallback repitió la misma URL.');
+      break;
+    }
+    tried.add(fb.directUrl);
+    if (fb.durationSeconds != null) {
+      assertDuration({ duration: fb.durationSeconds }, durationCap);
+    }
+    const rawPath = fallbackDestPath(jobDir, jobId, fb);
+    try {
+      console.log(
+        `[${platform}] fallback candidate ${attempt + 1}: ${String(fb.directUrl).slice(0, 64)}…`
+      );
+      await downloadDirectUrl(
+        fb.directUrl,
+        rawPath,
+        (dlPct) => {
+          onProgress(mapRange(dlPct, 8, 72), 'download');
+        },
+        fb.requestHeaders || null
+      );
+      return { fb, rawPath };
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[${platform}] fallback candidate failed: ${err.message || err}`);
+      try {
+        fs.rmSync(rawPath, { force: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
+  throw lastErr || new Error('No hay fuente alternativa pública para este vídeo.');
 }
 
 async function runYtdlpVideoPipeline({
@@ -451,7 +616,6 @@ async function runYtdlpVideoPipeline({
   let preDuration = null;
   let usedFallback = false;
   let fallbackAnalysis = {};
-
   if (downloadOptions.mediaKind !== 'photo') {
     try {
       meta = await fetchMetadata(resolvedUrl, config, provider, downloadOptions);
@@ -464,14 +628,10 @@ async function runYtdlpVideoPipeline({
     } catch (err) {
       if (typeof provider.fetchFallbackMedia !== 'function') throw err;
       console.warn(`[${platform}] yt-dlp metadata failed, trying fallback: ${err.message || err}`);
-      const fb = await resolveFallbackMedia(provider, resolvedUrl);
-      if (fb.durationSeconds != null) {
-        assertDuration({ duration: fb.durationSeconds }, durationCap);
-      }
-      meta = { title: fb.title, id: fb.id || jobId, duration: fb.durationSeconds };
-      preDuration = fb.durationSeconds;
-      usedFallback = fb;
-      fallbackAnalysis = { hadWatermarkOnly: Boolean(fb.hadWatermarkOnly) };
+      // Defer actual download to the fallback candidate loop below (set a placeholder).
+      usedFallback = { _pendingCandidates: true, title: 'media', id: jobId };
+      meta = { title: 'media', id: jobId };
+      fallbackAnalysis = {};
     }
   } else {
     console.log(`[${platform}] photo item — skipping video duration check`);
@@ -485,16 +645,25 @@ async function runYtdlpVideoPipeline({
   console.log(`[${platform}] downloading...`);
   await onProgress(8, 'download');
 
-  if (usedFallback && usedFallback.directUrl) {
-    rawPath = fallbackDestPath(jobDir, jobId, usedFallback);
-    await downloadDirectUrl(
-      usedFallback.directUrl,
-      rawPath,
-      (dlPct) => {
-        onProgress(mapRange(dlPct, 8, 72), 'download');
-      },
-      usedFallback.requestHeaders || null
-    );
+  if (usedFallback && (usedFallback.directUrl || usedFallback._pendingCandidates)) {
+    const got = await downloadViaFallbackCandidates({
+      provider,
+      resolvedUrl,
+      jobDir,
+      jobId,
+      onProgress,
+      durationCap,
+      platform,
+    });
+    usedFallback = got.fb;
+    rawPath = got.rawPath;
+    meta = {
+      title: got.fb.title || meta.title,
+      id: got.fb.id || meta.id || jobId,
+      duration: got.fb.durationSeconds,
+    };
+    preDuration = got.fb.durationSeconds;
+    fallbackAnalysis = { hadWatermarkOnly: Boolean(got.fb.hadWatermarkOnly) };
   } else {
     try {
       await downloadRaw(
@@ -512,8 +681,9 @@ async function runYtdlpVideoPipeline({
     } catch (err) {
       // YouTube stream 403: retry once (serial + alternate clients). Do NOT fall back to
       // Innertube googlevideo URLs — those also 403 and surface as "Descarga directa 403".
-      if (platform === 'youtube' && isYoutubeStream403Error(err)) {
-        console.warn(`[youtube] stream 403, retrying once (serial, default clients)...`);
+      const youtubeish = platform === 'youtube' || isYoutubeUrl(resolvedUrl);
+      if (youtubeish && isYoutubeStream403Error(err)) {
+        console.warn(`[${platform}] stream 403, retrying once (serial)...`);
         try {
           await downloadRaw(
             resolvedUrl,
@@ -531,31 +701,53 @@ async function runYtdlpVideoPipeline({
           );
           rawPath = findDownloadedFile(jobDir, jobId);
         } catch (retryErr) {
-          throw new Error(
-            `YouTube bloqueó la descarga del stream (403). Prueba de nuevo en unos minutos.`
-          );
+          if (typeof provider.fetchFallbackMedia === 'function') {
+            console.warn(`[${platform}] 403 retry failed, trying cookieless fallback...`);
+            const got = await downloadViaFallbackCandidates({
+              provider,
+              resolvedUrl,
+              jobDir,
+              jobId,
+              onProgress,
+              durationCap,
+              platform,
+            });
+            usedFallback = got.fb;
+            rawPath = got.rawPath;
+            meta = {
+              title: got.fb.title || meta.title,
+              id: got.fb.id || meta.id || jobId,
+              duration: got.fb.durationSeconds,
+            };
+            fallbackAnalysis = { hadWatermarkOnly: Boolean(got.fb.hadWatermarkOnly) };
+          } else {
+            throw new Error(
+              `YouTube bloqueó la descarga del stream (403). Prueba de nuevo en unos minutos.`
+            );
+          }
         }
       } else if (
         typeof provider.fetchFallbackMedia === 'function' &&
-        (platform !== 'youtube' || isYoutubeAgeGateError(err))
+        (!youtubeish || isYoutubeAuthWallError(err) || isYoutubeStream403Error(err))
       ) {
         console.warn(`[${platform}] yt-dlp download failed, trying fallback: ${err.message || err}`);
-        const fb = await resolveFallbackMedia(provider, resolvedUrl);
-        if (fb.durationSeconds != null) {
-          assertDuration({ duration: fb.durationSeconds }, durationCap);
-        }
-        meta = { title: fb.title, id: fb.id || meta.id || jobId, duration: fb.durationSeconds };
-        fallbackAnalysis = { hadWatermarkOnly: Boolean(fb.hadWatermarkOnly) };
-        rawPath = fallbackDestPath(jobDir, jobId, fb);
-        await downloadDirectUrl(
-          fb.directUrl,
-          rawPath,
-          (dlPct) => {
-            onProgress(mapRange(dlPct, 8, 72), 'download');
-          },
-          fb.requestHeaders || null
-        );
-        usedFallback = fb;
+        const got = await downloadViaFallbackCandidates({
+          provider,
+          resolvedUrl,
+          jobDir,
+          jobId,
+          onProgress,
+          durationCap,
+          platform,
+        });
+        usedFallback = got.fb;
+        rawPath = got.rawPath;
+        meta = {
+          title: got.fb.title || meta.title,
+          id: got.fb.id || meta.id || jobId,
+          duration: got.fb.durationSeconds,
+        };
+        fallbackAnalysis = { hadWatermarkOnly: Boolean(got.fb.hadWatermarkOnly) };
       } else {
         throw err;
       }
@@ -567,6 +759,69 @@ async function runYtdlpVideoPipeline({
   return { meta, rawPath, fallbackAnalysis, qualityMode, usedFallback, preDuration };
 }
 
+/** Discord embed description hard limit — never invent "…" mid-caption. */
+const DISCORD_EMBED_DESCRIPTION_MAX = 4096;
+
+function cleanPostCaption(raw) {
+  let text = String(raw || '')
+    .replace(/\r\n/g, '\n')
+    .trim();
+  if (!text) return '';
+  // Drop media / tracking URLs that usually trail social captions.
+  text = text.replace(/\s*https?:\/\/t\.co\/\S+/gi, '');
+  text = text.replace(/\s*https?:\/\/(?:pic\.twitter\.com|x\.com|twitter\.com|instagram\.com|fb\.watch)\S*/gi, '');
+  text = text.replace(/\s*https?:\/\/\S+/gi, '');
+  // yt-dlp often flattens real newlines into 2+ spaces — restore paragraph breaks.
+  if (!text.includes('\n') && /[^\S\n]{2,}/.test(text)) {
+    text = text.replace(/[^\S\n]{2,}/g, '\n\n');
+  } else {
+    text = text.replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' ');
+  }
+  text = text.replace(/\n{3,}/g, '\n\n').trim();
+  // Cap only at Discord's hard limit; do not append "..." / "…".
+  if (text.length > DISCORD_EMBED_DESCRIPTION_MAX) {
+    text = text.slice(0, DISCORD_EMBED_DESCRIPTION_MAX).trimEnd();
+  }
+  return text;
+}
+
+function looksTruncatedCaption(text) {
+  const t = String(text || '').trim();
+  return /\.\.\.$/.test(t) || /…$/.test(t);
+}
+
+function captionFromMeta(meta) {
+  if (!meta || typeof meta !== 'object') return '';
+  const fromDescription = cleanPostCaption(meta.description);
+  if (fromDescription && !looksTruncatedCaption(fromDescription)) return fromDescription;
+
+  // X/Twitter often exposes the tweet as "User - text" in title when description is URL-only.
+  // Titles are frequently cut with "..."; skip those when we already have a better description.
+  const titled = cleanPostCaption(meta.title || meta.fulltitle);
+  if (!titled) return fromDescription;
+  if (looksTruncatedCaption(titled) && fromDescription) return fromDescription;
+  if (looksTruncatedCaption(titled)) return ''; // prefer provider.resolveCaption over truncated title
+  const stripped = titled.replace(/^.{1,48}?\s+[—–-]\s+/, '').trim();
+  if (stripped && stripped.length >= 2 && stripped !== titled) return stripped;
+  return titled;
+}
+
+async function resolvePostCaption(provider, url, meta, includeDescription) {
+  if (!includeDescription) return '';
+  if (provider && provider.id === 'spotify') return '';
+
+  if (provider && typeof provider.resolveCaption === 'function') {
+    try {
+      const fromProvider = await provider.resolveCaption(url, meta);
+      const cleaned = cleanPostCaption(fromProvider);
+      if (cleaned) return cleaned;
+    } catch (err) {
+      console.warn(`[${provider.id}] resolveCaption: ${err.message || err}`);
+    }
+  }
+  return captionFromMeta(meta);
+}
+
 /**
  * @param {string} url
  * @param {{
@@ -574,19 +829,23 @@ async function runYtdlpVideoPipeline({
  *   qualityMode?: string,
  *   playlistItem?: number,
  *   mediaKind?: 'video'|'photo',
+ *   includeDescription?: boolean,
  * }} [options]
  */
 async function downloadAndPrepare(url, options = {}) {
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : async () => {};
   const config = getConfig();
-  const provider = resolveProviderByUrl(url);
+  let provider = resolveProviderByUrl(url);
   if (!provider) {
     throw new Error('Plataforma no soportada.');
   }
   const platform = provider.id;
+  const includeDescription = Boolean(options.includeDescription);
   // Default auto for every provider unless the user picks calidad
   const qualityMode = normalizeQualityMode(options.qualityMode || 'auto');
-  const resolvedUrl = normalizeUrl(url, provider);
+  let resolvedUrl = normalizeUrl(url, provider);
+  let forceAttachment = false;
+  let titleOverride = null;
   const downloadOptions = {
     playlistItem: options.playlistItem,
     mediaKind: options.mediaKind === 'photo' ? 'photo' : 'video',
@@ -609,7 +868,42 @@ async function downloadAndPrepare(url, options = {}) {
 
   try {
     await onProgress(2, 'metadata');
-    const r2Ready = isR2Configured(config);
+
+    // Optional rewrite (Spotify track → music video CDN / YouTube).
+    if (typeof provider.resolveSource === 'function') {
+      const source = await provider.resolveSource(resolvedUrl, { run });
+      if (!source || !source.sourceUrl) {
+        throw new Error('No se pudo resolver el media de origen.');
+      }
+      resolvedUrl = source.sourceUrl;
+      titleOverride = source.title || null;
+      forceAttachment = Boolean(source.forceAttachment);
+      if (source.downloadMode === 'direct' && source.sourceUrl) {
+        // Handled below via synthetic fallback-style download.
+        downloadOptions._directSourceUrl = source.sourceUrl;
+        downloadOptions._directSourceTitle = source.title || titleOverride;
+      }
+      if (source.formatProviderId) {
+        const formatDonor = resolveProviderById(source.formatProviderId);
+        if (formatDonor) {
+          provider = {
+            ...provider,
+            formatSelector: formatDonor.formatSelector.bind(formatDonor),
+            extraArgs:
+              typeof formatDonor.extraArgs === 'function'
+                ? formatDonor.extraArgs.bind(formatDonor)
+                : provider.extraArgs,
+            fetchFallbackMedia:
+              typeof formatDonor.fetchFallbackMedia === 'function'
+                ? formatDonor.fetchFallbackMedia.bind(formatDonor)
+                : provider.fetchFallbackMedia,
+          };
+        }
+      }
+      console.log(`[${platform}] resolved source → ${resolvedUrl}`);
+    }
+
+    const r2Ready = isR2Configured(config) && !forceAttachment;
     const durationCap = config.maxDurationSeconds;
     console.log(
       `[${platform}] checking duration before download (max ${durationCap}s${r2Ready ? ', R2 long-video ready' : ''})...`
@@ -624,7 +918,7 @@ async function downloadAndPrepare(url, options = {}) {
 
     // Peek duration from metadata when possible so long clips download at full quality.
     let hostedDelivery = false;
-    if (r2Ready && downloadOptions.mediaKind !== 'photo') {
+    if (r2Ready && downloadOptions.mediaKind !== 'photo' && !downloadOptions._directSourceUrl) {
       try {
         const earlyMeta = await fetchMetadata(resolvedUrl, config, provider, downloadOptions);
         const earlyDur = Number(earlyMeta && earlyMeta.duration);
@@ -639,19 +933,44 @@ async function downloadAndPrepare(url, options = {}) {
       }
     }
 
-    const pipeline = await runYtdlpVideoPipeline({
-      resolvedUrl,
-      provider,
-      config,
-      downloadOptions: { ...downloadOptions, hostedDelivery },
-      qualityMode,
-      platform,
-      jobDir,
-      jobId,
-      onProgress,
-      maxDurationSeconds: durationCap,
-    });
+    let pipeline;
+    if (downloadOptions._directSourceUrl) {
+      // Spotify (or similar) already gave a direct CDN URL.
+      const directUrl = downloadOptions._directSourceUrl;
+      const rawPath = path.join(jobDir, `${jobId}.mp4`);
+      console.log(`[${platform}] downloading direct source...`);
+      await onProgress(8, 'download');
+      await downloadDirectUrl(directUrl, rawPath, (dlPct) => {
+        onProgress(mapRange(dlPct, 8, 72), 'download');
+      });
+      await onProgress(72, 'download');
+      pipeline = {
+        meta: {
+          title: downloadOptions._directSourceTitle || titleOverride || 'video',
+          id: jobId,
+        },
+        rawPath,
+        fallbackAnalysis: {},
+      };
+    } else {
+      pipeline = await runYtdlpVideoPipeline({
+        resolvedUrl,
+        provider,
+        config,
+        downloadOptions: { ...downloadOptions, hostedDelivery },
+        qualityMode,
+        platform,
+        jobDir,
+        jobId,
+        onProgress,
+        maxDurationSeconds: durationCap,
+      });
+    }
     const { meta, rawPath, fallbackAnalysis } = pipeline;
+    if (titleOverride) meta.title = titleOverride;
+
+    // Spotify resolves to YouTube; don't paste the YT description as "post text".
+    const caption = await resolvePostCaption(provider, url, meta, includeDescription);
 
     // Photo / image path: no FFmpeg compress, just size-check and return
     if (downloadOptions.mediaKind === 'photo' || isImagePath(rawPath)) {
@@ -672,12 +991,14 @@ async function downloadAndPrepare(url, options = {}) {
         sizeBytes,
         durationSeconds: 0,
         hadWatermarkOnly: false,
+        caption,
         cleanup,
       };
     }
 
     const probed = await probeDuration(rawPath);
-    const needsR2 = Number.isFinite(probed) && probed > config.r2LongVideoSeconds;
+    const needsR2 =
+      !forceAttachment && Number.isFinite(probed) && probed > config.r2LongVideoSeconds;
     const useR2 = needsR2 && r2Ready;
 
     if (probed > config.maxDurationSeconds) {
@@ -736,6 +1057,7 @@ async function downloadAndPrepare(url, options = {}) {
         sizeBytes: uploaded.sizeBytes,
         durationSeconds: prepared.durationSeconds,
         hadWatermarkOnly,
+        caption,
         cleanup,
       };
     }
@@ -765,6 +1087,7 @@ async function downloadAndPrepare(url, options = {}) {
       sizeBytes: compressed.sizeBytes,
       durationSeconds: compressed.durationSeconds,
       hadWatermarkOnly,
+      caption,
       cleanup,
     };
   } catch (err) {

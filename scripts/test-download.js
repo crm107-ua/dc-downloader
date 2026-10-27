@@ -76,6 +76,20 @@ const FIXTURES = [
     name: 'facebook-watch',
     url: 'https://fb.watch/v/3m6DCkaa-/',
   },
+  {
+    name: 'spotify',
+    url: 'https://open.spotify.com/intl-es/track/6PSFclnJArpyAdCKczoK07?si=7332ebf4a4c342d0',
+  },
+  {
+    name: 'spotify-noclip',
+    url: 'https://open.spotify.com/track/4G7SaOQ8RFtvmCKVhIeN1V?si=YvdJ_sLeRpeyVyz14OxBYA&utm_source=copy-link',
+    expectError: /No hay videoclip disponible/i,
+  },
+  {
+    name: 'x-caption',
+    url: 'https://x.com/trader1sz/status/2114412296097472990?s=20',
+    includeDescription: true,
+  },
 ];
 
 function mb(bytes) {
@@ -117,10 +131,31 @@ async function testOne(fixture) {
   console.log(`\n=== ${fixture.name.toUpperCase()} ===`);
   console.log(fixture.url);
 
-  const result = await downloadAndPrepare(fixture.url, {
-    playlistItem: fixture.playlistItem,
-    mediaKind: fixture.mediaKind,
-  });
+  let result;
+  try {
+    result = await downloadAndPrepare(fixture.url, {
+      playlistItem: fixture.playlistItem,
+      mediaKind: fixture.mediaKind,
+      includeDescription: Boolean(fixture.includeDescription),
+    });
+  } catch (err) {
+    const message = String((err && err.message) || err || '');
+    if (fixture.expectError && fixture.expectError.test(message)) {
+      console.log(`expected error OK: ${message}`);
+      return {
+        name: fixture.name,
+        sizeBytes: 0,
+        durationSeconds: 0,
+        mediaType: 'expected-error',
+        dest: '(error)',
+      };
+    }
+    throw err;
+  }
+  if (fixture.expectError) {
+    throw new Error(`${fixture.name}: se esperaba error ${fixture.expectError}`);
+  }
+
   const isR2 = result.delivery === 'r2';
   const okSize = isR2 || result.sizeBytes <= config.maxFileSizeBytes;
   const okDuration =
@@ -129,6 +164,7 @@ async function testOne(fixture) {
   console.log(`title: ${result.title}`);
   console.log(`platform: ${result.platform}`);
   console.log(`mediaType: ${result.mediaType || 'video'}`);
+  if (result.caption) console.log(`caption: ${result.caption}`);
   if (result.mediaType === 'image') {
     console.log(`size: ${mb(result.sizeBytes)} MB (limit ${config.maxFileSizeMb} MB) ${okSize ? 'OK' : 'FAIL'}`);
   } else {
@@ -143,6 +179,9 @@ async function testOne(fixture) {
     console.log(
       `watermark: ${result.hadWatermarkOnly ? 'ONLY watermarked formats available' : 'preferred non-watermark stream'}`
     );
+  }
+  if (fixture.includeDescription && !result.caption) {
+    throw new Error(`${fixture.name}: se pedía descripción y no llegó caption`);
   }
 
   // Keep a copy for manual inspection (attachment path only; R2 keeps no local filePath).
@@ -207,7 +246,7 @@ async function main() {
     : FIXTURES;
   if (!list.length) {
     console.error(
-      `Unknown fixture "${only}". Use: x | reddit | youtube | tiktok | instagram | facebook`
+      `Unknown fixture "${only}". Use: x | reddit | youtube | tiktok | instagram | facebook | spotify`
     );
     process.exit(1);
   }

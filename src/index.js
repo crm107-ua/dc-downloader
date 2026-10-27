@@ -57,6 +57,15 @@ async function main() {
     console.warn(`[availability] BOT_OFFLINE activo → "${getOfflineMessage()}"`);
   }
 
+  try {
+    const { FFMPEG_BIN, FFPROBE_BIN, YT_DLP_BIN } = require('./utils/bins');
+    console.log(`[bins] ffmpeg=${FFMPEG_BIN}`);
+    console.log(`[bins] ffprobe=${FFPROBE_BIN}`);
+    console.log(`[bins] yt-dlp=${YT_DLP_BIN}`);
+  } catch (err) {
+    console.warn(`[bins] no se pudieron resolver binarios: ${err.message || err}`);
+  }
+
   await registerCommands();
 
   const client = new Client({

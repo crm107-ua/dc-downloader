@@ -1,21 +1,23 @@
 {
   "name": "dc-downloader",
-  "version": "1.0.0",
-  "description": "Discord bot to download and compress short videos from X, Reddit, YouTube, and TikTok",
+  "version": "1.0.1",
+  "description": "Discord bot to download and compress short videos from X, Reddit, YouTube, TikTok, Instagram, Facebook and Spotify",
   "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
     "start": "node src/index.js",
     "register": "node src/register-commands.js",
-    "test:download": "node scripts/test-download.js"
+    "test:download": "node scripts/test-download.js",
+    "test:e2e": "node scripts/e2e-smoke.js",
+    "verify:bins": "node scripts/verify-bins.js",
+    "postinstall": "node scripts/slim-node-modules.js || exit 0"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",
-    "@aws-sdk/lib-storage": "^3.1144.0",
     "discord.js": "^14.16.3",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.6.1"
   }
 }

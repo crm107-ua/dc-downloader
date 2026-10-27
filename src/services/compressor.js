@@ -2,31 +2,9 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { YT_DLP_BIN, resolveBin } = require('../utils/bins');
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
-
-/**
- * Prefer a modern yt-dlp. System /usr/local/bin (often months old) gets googlevideo 403.
- * Override with YT_DLP_BIN if needed.
- */
-function resolveYtDlpBin() {
-  if (process.env.YT_DLP_BIN) return process.env.YT_DLP_BIN;
-  const candidates = [
-    path.join(os.homedir(), '.local', 'bin', 'yt-dlp'),
-    '/home/carlos/.local/bin/yt-dlp',
-  ];
-  for (const candidate of candidates) {
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      return candidate;
-    } catch {
-      // try next
-    }
-  }
-  return 'yt-dlp';
-}
-
-const YT_DLP_BIN = resolveYtDlpBin();
 
 function isYtDlpCommand(command) {
   return command === 'yt-dlp' || /(^|[\\/])yt-dlp(\.exe)?$/i.test(String(command));
@@ -41,7 +19,7 @@ function run(command, args, options = {}) {
     ...spawnOptions
   } = options;
 
-  const resolvedCommand = command === 'yt-dlp' ? YT_DLP_BIN : command;
+  const resolvedCommand = resolveBin(command);
 
   return new Promise((resolve, reject) => {
     const child = spawn(resolvedCommand, args, {

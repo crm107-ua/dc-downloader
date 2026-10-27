@@ -19,11 +19,13 @@ const CAROUSEL_TIMEOUT_MS = 120000;
 
 const data = new SlashCommandBuilder()
   .setName('video')
-  .setDescription('Descarga un video (X, Reddit, YouTube, TikTok, Instagram, Facebook) y lo envía aquí')
+  .setDescription(
+    'Descarga un video (X, Reddit, YouTube, TikTok, Instagram, Facebook, Spotify) y lo envía aquí'
+  )
   .addStringOption((option) =>
     option
       .setName('url')
-      .setDescription('Enlace del video')
+      .setDescription('Enlace del video o track de Spotify')
       .setRequired(true)
   )
   .addStringOption((option) =>
@@ -36,6 +38,12 @@ const data = new SlashCommandBuilder()
         { name: 'Alta (más lento, mejor imagen)', value: 'alta' },
         { name: 'Rápida (menos calidad)', value: 'rapida' }
       )
+  )
+  .addBooleanOption((option) =>
+    option
+      .setName('descripcion')
+      .setDescription('Incluye el texto del post (p. ej. el tuit) encima del vídeo')
+      .setRequired(false)
   );
 
 /**
@@ -126,6 +134,7 @@ async function promptCarouselChoice(interaction, choices) {
 async function execute(interaction) {
   const rawUrl = interaction.options.getString('url', true);
   const calidadOpt = interaction.options.getString('calidad');
+  const includeDescription = Boolean(interaction.options.getBoolean('descripcion'));
 
   let url;
   try {
@@ -184,6 +193,7 @@ async function execute(interaction) {
           qualityMode,
           playlistItem: carouselPick ? carouselPick.playlistItem : undefined,
           mediaKind: carouselPick ? carouselPick.mediaKind : undefined,
+          includeDescription,
           onProgress: (percent, stage) => progress.update(percent, stage),
         }),
       {
@@ -220,7 +230,7 @@ async function execute(interaction) {
       (interaction.member && interaction.member.displayName) ||
       interaction.user.globalName ||
       interaction.user.username;
-    // Compact card: avatar + "Name · 🔗" (link sits to the right of the name).
+    // Compact card: avatar + "Name · 🔗" (+ optional post caption under it).
     const requesterEmbed = new EmbedBuilder()
       .setColor(0x2b2d31)
       .setAuthor({
@@ -229,7 +239,13 @@ async function execute(interaction) {
         url,
       });
 
-    // Card first (username · 🔗), then media.
+    if (includeDescription && result.caption) {
+      // Keep real newlines so Discord wraps to the next line (no mid-text "...").
+      const safe = String(result.caption).replace(/\*/g, '∗');
+      requesterEmbed.setDescription(`*${safe}*`);
+    }
+
+    // Card first (username · 🔗 ± caption), then media.
     await interaction.channel.send({ embeds: [requesterEmbed] });
 
     if (result.delivery === 'r2' && result.publicUrl) {

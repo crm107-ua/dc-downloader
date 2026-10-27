@@ -117,6 +117,11 @@ function parseAllowedUrl(raw) {
     );
   }
 
+  // Let providers reject unsupported paths early (e.g. Spotify album/playlist).
+  if (typeof provider.normalizeUrl === 'function') {
+    return provider.normalizeUrl(parsed.toString());
+  }
+
   return parsed.toString();
 }
 

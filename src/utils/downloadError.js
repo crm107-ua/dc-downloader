@@ -8,8 +8,11 @@ function formatDownloadError(raw) {
   if (/Sign in to confirm your age|may be inappropriate for some users/i.test(original)) {
     return 'YouTube bloquea este vídeo por edad. Se intentó fuente alternativa automáticamente; si falló, el vídeo no tiene CDN/público disponible.';
   }
-  if (/no hay fuente alternativa pública/i.test(original)) {
-    return 'YouTube bloquea este vídeo por edad o restricción y no hay fuente alternativa pública.';
+  if (/Sign in to confirm you.?re not a bot|confirm you.?re not a bot/i.test(original)) {
+    return 'YouTube bloquea este host (bot-check). Prueba más tarde o configura COOKIES_FILE con cookies de una cuenta de YouTube.';
+  }
+  if (/no hay fuente alternativa pública|bloquea este vídeo \(bot\/edad\)/i.test(original)) {
+    return 'YouTube bloquea este vídeo (bot/edad) y no hay fuente alternativa pública desde este servidor.';
   }
   if (/comfortable for some audiences|Log in for access/i.test(original)) {
     return 'TikTok no permite descargar este vídeo (contenido restringido o privado).';
@@ -66,6 +69,10 @@ function formatDownloadError(raw) {
     return 'El enlace no se pudo descargar (privado o no disponible).';
   }
   if (/Plataforma no soportada/i.test(msg)) return msg;
+  if (/Solo tracks de Spotify/i.test(msg)) return msg;
+  if (/No hay videoclip disponible para este track/i.test(original) || /No hay videoclip disponible/i.test(msg)) {
+    return 'No hay videoclip disponible para este track.';
+  }
 
   const first = msg.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || msg;
   return first.slice(0, 500) || 'Error desconocido al descargar.';

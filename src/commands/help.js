@@ -27,8 +27,8 @@ async function execute(interaction) {
         name: 'Qué tienes que hacer',
         value: [
           '1. Escribe `/video`',
-          '2. En **url** pega el enlace (YouTube, TikTok, Instagram, etc.)',
-          '3. Opcional: elige **calidad** (`auto` suele ir bien)',
+          '2. En **url** pega el enlace (YouTube, TikTok, Instagram, Spotify track, etc.)',
+          '3. Opcional: **calidad** (`auto` suele ir bien) y **descripcion** (texto del post)',
           '4. Espera: verás una barra de progreso y, al terminar, el vídeo en el chat',
           '',
           'Si el post de Instagram es un carrusel (varias fotos/vídeos), el bot te preguntará cuál quieres.',
@@ -39,6 +39,14 @@ async function execute(interaction) {
         value: providers || supportedLabels(),
       },
       {
+        name: 'Spotify (tracks)',
+        value: [
+          'Pega un enlace de **track** (no álbum ni playlist).',
+          'El bot busca el **videoclip** (Spotify → YouTube) y lo comprime a ≤10 MB.',
+          'Si no hay videoclip: *No hay videoclip disponible para este track.*',
+        ].join('\n'),
+      },
+      {
         name: 'Calidad (opcional)',
         value: [
           `**auto** — equilibrado (por defecto)`,
@@ -47,6 +55,11 @@ async function execute(interaction) {
           '',
           `Si el vídeo dura **más de ${longMin} minutos**, da igual la calidad que elijas: se guarda en la máxima calidad posible y se reproduce con un reproductor en el chat (no se aprieta a ${maxMb} MB).`,
         ].join('\n'),
+      },
+      {
+        name: 'Descripción (opcional)',
+        value:
+          'Activa **descripcion** para enviar también el texto del post (p. ej. el tuit) encima del vídeo, junto al nombre de quien usó `/video`.',
       },
       {
         name: 'Cuánto puede durar y cómo llega',

@@ -14,6 +14,11 @@
  *                     returns { isCarousel, title?, items: [{ index, id, kind, label }] }
  *   fetchFallbackMedia(url) optional async — direct CDN URL when yt-dlp cannot access the post
  *                     returns { directUrl, title, id?, durationSeconds?, hadWatermarkOnly? }
+ *   resolveSource(url, ctx) optional async — rewrite URL before metadata/download
+ *                     (e.g. Spotify track → YouTube music video). ctx includes { run }.
+ *                     returns { sourceUrl, title?, forceAttachment?, downloadMode?, formatProviderId? }
+ *   resolveCaption(url, meta) optional async — full post text for /video descripcion
+ *                     (e.g. X via fxtwitter so newlines aren't flattened / titles aren't "...").
  *
  * Register new providers in ./index.js only. Do not hardcode platforms in the pipeline.
  */

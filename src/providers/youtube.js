@@ -58,12 +58,13 @@ const INNERTUBE_CLIENTS = [
 ];
 
 const FRONTEND_APIS = [
-  (id) => `https://pipedapi.kavin.rocks/streams/${id}`,
+  (id) => `https://api.piped.private.coffee/streams/${id}`,
+  (id) => `https://pipedapi.nosebs.ru/streams/${id}`,
+  (id) => `https://pipedapi.reallyaweso.me/streams/${id}`,
   (id) => `https://pipedapi.adminforge.de/streams/${id}`,
   (id) => `https://pipedapi.syncpundit.io/streams/${id}`,
   (id) => `https://invidious.nerdvpn.de/api/v1/videos/${id}`,
   (id) => `https://yewtu.be/api/v1/videos/${id}`,
-  (id) => `https://inv.nadeko.net/api/v1/videos/${id}`,
 ];
 
 function extractVideoId(rawUrl) {
@@ -392,38 +393,115 @@ const provider = {
     return `https://www.youtube.com/watch?v=${id}`;
   },
   extraArgs() {
-    // Keep yt-dlp defaults (visionos/web/…). Forcing tv/ios alone breaks some titles.
-    return ['--no-write-subs', '--no-write-auto-subs'];
+    // YouTube bot-check needs a JS runtime (EJS) + non-WEB players. Node is always
+    // available in our hosts; remote ejs:github pulls solver scripts when missing.
+    // See https://github.com/yt-dlp/yt-dlp/wiki/EJS
+    return [
+      '--no-write-subs',
+      '--no-write-auto-subs',
+      '-4',
+      '--js-runtimes',
+      'node',
+      '--remote-components',
+      'ejs:github',
+      '--extractor-args',
+      'youtube:player_client=android,web_embedded,tv,ios,web',
+    ];
   },
   /**
-   * Cookieless recovery when yt-dlp hits age-gate / login wall:
-   * 1) known publisher CDN overrides
-   * 2) Innertube alternate clients (contentCheckOk / embed)
-   * 3) Piped / Invidious public APIs
-   * 4) Rockstar official media scrape when oEmbed says Rockstar
+   * Cookieless recovery when yt-dlp hits age-gate / bot-check / login wall.
+   * ctx.skipUrls = Set of directUrl already tried (caller retries candidates).
    */
-  async fetchFallbackMedia(pageUrl) {
+  async fetchFallbackMedia(pageUrl, ctx = {}) {
     const videoId = extractVideoId(pageUrl);
     if (!videoId) {
       throw new Error('No se pudo extraer el ID del vídeo de YouTube.');
     }
+    const skip = ctx.skipUrls instanceof Set ? ctx.skipUrls : new Set(ctx.skipUrls || []);
+
+    const take = (candidate) => {
+      if (!candidate || !candidate.directUrl) return null;
+      if (skip.has(candidate.directUrl)) return null;
+      return { ...candidate, id: videoId };
+    };
 
     const official = OFFICIAL_CDN_BY_ID[videoId];
     if (official) {
-      return { ...official, id: videoId };
+      const hit = take({ ...official, id: videoId });
+      if (hit) return hit;
     }
 
-    const fromTube = await tryInnertube(videoId);
-    if (fromTube) return fromTube;
+    // Innertube: try each client separately so skipUrls can advance.
+    for (const client of INNERTUBE_CLIENTS) {
+      try {
+        const j = await innertubePlayer(videoId, client);
+        if (!j) continue;
+        const status = j.playabilityStatus && j.playabilityStatus.status;
+        const formats = [
+          ...(j.streamingData?.formats || []),
+          ...(j.streamingData?.adaptiveFormats || []),
+        ];
+        const directUrl = pickBestUrlFromFormats(formats);
+        if (directUrl && (status === 'OK' || status === 'LIVE_STREAM_OFFLINE' || !status)) {
+          const hit = take({
+            directUrl,
+            title:
+              j.videoDetails?.title ||
+              j.microformat?.playerMicroformatRenderer?.title?.simpleText ||
+              'youtube',
+            id: videoId,
+            durationSeconds: Number.isFinite(Number(j.videoDetails?.lengthSeconds))
+              ? Number(j.videoDetails.lengthSeconds)
+              : null,
+            requestHeaders: {
+              Referer: 'https://www.youtube.com/',
+              'User-Agent': UA,
+            },
+          });
+          if (hit) return hit;
+        }
+      } catch {
+        // next client
+      }
+    }
 
-    const fromFront = await tryFrontends(videoId);
-    if (fromFront) return fromFront;
+    for (const build of FRONTEND_APIS) {
+      const url = build(videoId);
+      try {
+        const res = await fetch(url, {
+          headers: { Accept: 'application/json', 'User-Agent': UA },
+          signal: AbortSignal.timeout(12000),
+        });
+        if (!res.ok) continue;
+        const text = await res.text();
+        if (!text || text[0] !== '{') continue;
+        const payload = JSON.parse(text);
+        if (payload.error) continue;
+        const picked = pickFromPipedOrInvidious(payload);
+        if (picked?.directUrl) {
+          const hit = take({
+            ...picked,
+            id: videoId,
+            requestHeaders: {
+              Referer: 'https://www.youtube.com/',
+              'User-Agent': UA,
+            },
+          });
+          if (hit) return hit;
+        }
+      } catch {
+        // next
+      }
+    }
 
     const fromRockstar = await tryRockstarByTitle(videoId);
-    if (fromRockstar) return fromRockstar;
+    if (fromRockstar) {
+      const hit = take(fromRockstar);
+      if (hit) return hit;
+    }
 
     throw new Error(
-      'YouTube bloquea este vídeo por edad o restricción y no hay fuente alternativa pública.'
+      'YouTube bloquea este vídeo (bot/edad) y no hay fuente alternativa pública.'
     );
   },
 };

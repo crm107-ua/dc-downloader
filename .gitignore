@@ -1,8 +1,14 @@
 node_modules/
+bin/
 .env
+cookies*.txt
+**/youtube-cookies.txt
 temp/
 *.mp4
 *.webm
 *.mkv
 *.part
 .DS_Store
+*.zip
+.bothosting/
+.bothostingignore

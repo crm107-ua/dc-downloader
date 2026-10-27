@@ -26,12 +26,12 @@ Léelo antes de cambiar código. Prioriza cambios mínimos, el contrato de provi
 
 Bot Discord (Node.js, CommonJS, discord.js v14) que:
 
-1. Recibe `/video url` (+ `calidad` opcional).
-2. Resuelve el proveedor por hostname.
+1. Recibe `/video url` (+ `calidad` / `descripcion` opcionales).
+2. Resuelve el proveedor por hostname (Spotify puede `resolveSource` → YouTube).
 3. Encola el job (un solo encode/descarga a la vez).
 4. Comprueba duración **antes** de descargar.
-5. Descarga con **yt-dlp**, comprime con **FFmpeg** bajo `MAX_FILE_SIZE_MB`.
-6. Responde solo con el MP4 y limpia el temp del job.
+5. Descarga con **yt-dlp**, comprime con **FFmpeg** bajo `MAX_FILE_SIZE_MB` (o R2 si >5 min).
+6. Envía card (+ caption si `descripcion`) y media; limpia el temp del job.
 
 Firma / autoría del producto: **by Wanikoko**.
 
@@ -66,7 +66,7 @@ src/
     contract.js            # Contrato + matchesHost helper
     index.js               # PROVIDERS[] — ÚNICO sitio para registrar
     formats.js             # Selectores -f compartidos
-    x.js | reddit.js | youtube.js | tiktok.js | instagram.js | facebook.js
+    x.js | reddit.js | youtube.js | tiktok.js | instagram.js | facebook.js | spotify.js
 
   services/
     downloader.js          # Pipeline: meta → download → compress|R2 → cleanup
@@ -77,9 +77,14 @@ src/
 
   utils/
     progress.js            # Embed progreso + heartbeat + UI cola
+    bins.js                # Resolución ffmpeg / ffprobe / yt-dlp
+    downloadError.js       # Mensajes de error al usuario
 
 scripts/
   test-download.js         # Prueba CLI sin Discord
+  e2e-smoke.js             # Spotify / Reddit sin Discord
+  ensure-bins.js           # Descarga yt-dlp a bin/ si falta
+  verify-bins.js           # Comprueba binarios
 
 ecosystem.config.js        # PM2 (PATH con yt-dlp user bin)
 .env.example               # Plantilla env
@@ -114,11 +119,12 @@ InteractionCreate (/video)
        → fetchMetadata (yt-dlp) → assertDuration  (omitido en fotos)
        → downloadRaw (yt-dlp -f provider | thumbnail si foto)
        → compressToLimit (FFmpeg)  (omitido en fotos)
-  → deleteReply + channel.send(author card) + channel.send(files)
+  → deleteReply + channel.send(author card ± caption) + channel.send(files|R2)
   → cleanup jobDir
 ```
 
-**Calidad por defecto:** `auto` (todos los providers). Opciones: `rapida` | `auto` | `alta`.
+**Calidad por defecto:** `auto` (todos los providers). Opciones: `rapida` | `auto` | `alta`.  
+**Descripción:** opción booleana `descripcion`; caption vía `provider.resolveCaption` o meta yt-dlp.
 
 ---
 
@@ -134,7 +140,8 @@ InteractionCreate (/video)
 | Cookies | `.env` `COOKIES_*` | Meter cookies en código |
 | Cola / paralelismo | `jobQueue.js` | Quitar enqueue de `video.js` |
 | YouTube URL weird | `providers/youtube.js` `normalizeUrl` | Truncar stdout a mano |
-| YouTube age-gate | `providers/youtube.js` `fetchFallbackMedia` (Innertube / frontends / CDN oficial p.ej. Rockstar) | Pedir COOKIES_FILE al usuario |
+| YouTube age-gate / bot-check | `providers/youtube.js` `extraArgs` (`player_client=android,…`) + `fetchFallbackMedia`; `downloader` trata bot-check como auth-wall y baja googlevideo en serie (`-N 1` / fetch) | Pedir COOKIES_FILE al usuario |
+| Spotify → MV YouTube bot-check | `spotify.js` busca vía Piped/Invidious; dona `fetchFallbackMedia`/format de YouTube | Pedir cookies YouTube |
 | Instagram carrusel | `providers/instagram.js` `listMediaChoices` + UI en `commands/video.js` | Forzar siempre el primer ítem en downloader |
 | Instagram freeze / VP9 | `instagram.js` format `3/2/1` + `compressor` no hace `-c copy` de no-H.264 | Mezclar DASH VP9 con stream copy |
 | Instagram restringido / age gate | `providers/instagram.js` `fetchFallbackMedia` (progressive o resolver público) | Cookies obligatorias en Discord |
@@ -142,6 +149,9 @@ InteractionCreate (/video)
 | Vídeos >5 min | `r2Storage.js` + upload directo si ya es H.264 → URL pública | Comprimir a 10 MB |
 | R2 almacenamiento | FIFO `enforceStorageBudget` (tope ~9 GB del gratis 10 GB) | Borrar por edad como temp |
 | Facebook reel / fb.watch | `providers/facebook.js` + registry | Meter lógica FB en downloader |
+| Spotify track → videoclip | `providers/spotify.js` `resolveSource` (Spotify preview → YouTube MV); siempre adjunto ≤10 MB | Álbumes/playlists; pedir cookies Spotify |
+| `/video descripcion` | `commands/video.js` + caption (`cleanPostCaption` / `provider.resolveCaption`; X: fxtwitter) | Truncar con `…` ni aplastar saltos de línea |
+| Reddit JSON anti-bot / share `/s/` (yt-dlp: "authentication is required") | `providers/reddit.js` `fetchFallbackMedia`: índice público + DASH `v.redd.it` (vídeo+audio) | Pedir cookies de cuenta Reddit al usuario |
 | Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |
 
 ---
@@ -153,7 +163,7 @@ Contrato mínimo (`contract.js`):
 - `id`, `label`, `hosts` (y/o `matches(host)`)
 - `formatSelector()` → string para `yt-dlp -f`
 - `extraArgs()` → `string[]`
-- Opcional: `analyzeMeta`, `normalizeUrl`
+- Opcional: `analyzeMeta`, `normalizeUrl`, `resolveSource`, `resolveCaption`, `fetchFallbackMedia`
 
 Registry: array `PROVIDERS` en `providers/index.js`.  
 `resolveProviderByUrl` / `ByHost` / `supportedLabels*` se usan desde config, help y downloader.
@@ -200,7 +210,7 @@ Leídas en `getConfig()`:
 | `R2_*` / `R2_MAX_STORAGE_GB` | Vídeos >5 min; FIFO ≤9 GB |
 | `COOKIES_FILE` / `COOKIES_FROM_BROWSER` | yt-dlp auth opcional (casi nunca; YT edad usa fallback) |
 | `BOT_OFFLINE` / `MAINTENANCE_MODE` | `1` → todos los slash responden «Servidor apagado, prueba más tarde.» |
-| `YT_DLP_BIN` | Ruta absoluta a yt-dlp (prod: `~/.local/bin/yt-dlp`) |
+| `YT_DLP_BIN` / `FFMPEG_BIN` / `FFPROBE_BIN` | Opcional; si vacío usa binarios del sistema (o `bin/` / ensure-bins) vía `src/utils/bins.js` |
 
 Nunca imprimir el token en logs. No subir `.env`.
 
@@ -213,8 +223,10 @@ En apagado limpio (`pm2 stop` / SIGTERM) el bot también responde «Servidor apa
 ```bash
 npm start                 # node src/index.js
 npm run register          # re-publica slash commands en guilds
-npm run test:download     # todos los providers de prueba
+npm run test:download     # providers de prueba
 npm run test:download -- youtube
+npm run test:e2e          # Spotify + Reddit
+npm run verify:bins       # ffmpeg / ffprobe / yt-dlp
 ```
 
 Tests CLI escriben en `temp/test-out/`. Útiles para validar calidad/tamaño sin Discord.
