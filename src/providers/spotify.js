@@ -239,19 +239,55 @@ async function searchYoutubeCandidates(query, run, limit = 8) {
     .filter((r) => r.id && r.title);
 }
 
+/**
+ * Videoclip length must be roughly the Spotify track length.
+ * Rejects 15–30s smart-preview clips and multi-hour mixes.
+ */
+function durationCloseEnough(candidateSec, trackSec) {
+  const cand = Number(candidateSec);
+  const track = Number(trackSec);
+  if (!Number.isFinite(cand) || cand <= 0) return false;
+  if (cand < 45 || cand > 900) return false;
+  if (!Number.isFinite(track) || track <= 0) {
+    return cand >= 90;
+  }
+  // ≥ ~55% of the song; ≤ ~145% + 30s slack.
+  if (cand < Math.max(60, track * 0.55)) return false;
+  if (cand > track * 1.45 + 30) return false;
+  return true;
+}
+
+function isSpotifyShortPreviewUrl(url) {
+  return /smart-preview-clips|\/previews\/|preview[_-]?clip/i.test(String(url || ''));
+}
+
+async function probeMediaDurationSeconds(mediaUrl, run) {
+  try {
+    const { stdout } = await run(
+      'yt-dlp',
+      ['--skip-download', '--print', '%(duration)s', '--no-warnings', mediaUrl],
+      { timeoutMs: 45000 }
+    );
+    const n = Number(String(stdout || '').trim().split(/\s+/)[0]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 function scoreCandidate(c, track, { mvKeyword, primary }) {
   const match = titleMatchesTrack(c.title, track.title, track.artists);
   if (!match || !match.ok) return null;
   const dur = Number(c.duration);
-  if (Number.isFinite(dur) && (dur < 45 || dur > 900)) return null;
+  if (!durationCloseEnough(dur, track.durationSeconds)) return null;
   let score = primary ? 6 : 10;
   if (mvKeyword) score += 8;
   if (match.artistHit) score += 5;
   if (Number.isFinite(track.durationSeconds) && Number.isFinite(dur)) {
     const delta = Math.abs(dur - track.durationSeconds);
-    if (delta <= 15) score += 8;
-    else if (delta <= 40) score += 3;
-    else if (delta > 120) score -= 6;
+    if (delta <= 15) score += 10;
+    else if (delta <= 40) score += 5;
+    else if (delta <= 90) score += 1;
   }
   if (/\b(video oficial|official music video|official video)\b/i.test(c.title)) score += 4;
   return { ...c, score };
@@ -289,20 +325,32 @@ async function resolveSource(rawUrl, ctx = {}) {
     throw new Error('No se pudo leer el título del track de Spotify.');
   }
 
-  // 1) Spotify music video / preview CDN when the embed exposes it.
+  // 1) Spotify-hosted video only if full-length (never smart-preview ~30s clips).
   if (track.videoPreviewUrl && /^https?:\/\//i.test(track.videoPreviewUrl)) {
-    console.log(`[spotify] using Spotify videoPreview for ${trackId}`);
-    return {
-      sourceUrl: track.videoPreviewUrl,
-      title: `${track.artists[0] || 'Spotify'} - ${track.title}`,
-      trackTitle: track.title,
-      artists: track.artists,
-      forceAttachment: true,
-      downloadMode: 'direct',
-    };
+    if (isSpotifyShortPreviewUrl(track.videoPreviewUrl)) {
+      console.log(`[spotify] skipping short preview CDN for ${trackId}`);
+    } else {
+      const previewDur = await probeMediaDurationSeconds(track.videoPreviewUrl, run);
+      if (durationCloseEnough(previewDur, track.durationSeconds)) {
+        console.log(
+          `[spotify] using Spotify video (${previewDur}s ≈ track ${track.durationSeconds}s) for ${trackId}`
+        );
+        return {
+          sourceUrl: track.videoPreviewUrl,
+          title: `${track.artists[0] || 'Spotify'} - ${track.title}`,
+          trackTitle: track.title,
+          artists: track.artists,
+          forceAttachment: true,
+          downloadMode: 'direct',
+        };
+      }
+      console.log(
+        `[spotify] Spotify video duration ${previewDur}s rejected (track ${track.durationSeconds}s); trying YouTube`
+      );
+    }
   }
 
-  // 2) YouTube official music video search.
+  // 2) YouTube official music video search (duration ≈ track).
   const artist = track.artists[0] || '';
   const queries = [
     artist ? `${artist} - ${track.title} official music video` : `${track.title} official music video`,
@@ -376,4 +424,6 @@ module.exports._test = {
   isRejectedVideoTitle,
   normalizeText,
   pickBestMusicVideo,
+  durationCloseEnough,
+  isSpotifyShortPreviewUrl,
 };

@@ -149,7 +149,7 @@ InteractionCreate (/video)
 | Vídeos >5 min | `r2Storage.js` + upload directo si ya es H.264 → URL pública | Comprimir a 10 MB |
 | R2 almacenamiento | FIFO `enforceStorageBudget` (tope ~9 GB del gratis 10 GB) | Borrar por edad como temp |
 | Facebook reel / fb.watch | `providers/facebook.js` + registry | Meter lógica FB en downloader |
-| Spotify track → videoclip | `providers/spotify.js` `resolveSource` (preview Spotify → YouTube): prioriza títulos MV y, si no, upload `Artista - Título` (rechaza lyrics/audio/visualiser/karaoke); siempre adjunto ≤10 MB | Álbumes/playlists; pedir cookies Spotify |
+| Spotify track → videoclip | `providers/spotify.js` `resolveSource`: nunca `smart-preview-clips` (~30 s); duración ≈ track (≥55%); MV o `Artista - Título` (rechaza lyrics/audio/visualiser); adjunto ≤10 MB | Álbumes/playlists; aceptar previews cortos de Spotify |
 | `/video descripcion` | `commands/video.js` + caption (`cleanPostCaption` / `provider.resolveCaption`; X: fxtwitter) | Truncar con `…` ni aplastar saltos de línea |
 | Reddit JSON anti-bot / share `/s/` (yt-dlp: "authentication is required") | `providers/reddit.js` `fetchFallbackMedia`: índice público + DASH `v.redd.it` (vídeo+audio) | Pedir cookies de cuenta Reddit al usuario |
 | Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |

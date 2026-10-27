@@ -25,9 +25,9 @@
 ## Spotify
 
 - Solo enlaces de **track** (`/track/…`), no álbumes ni playlists.
-- Flujo: videoclip en Spotify → si no, YouTube (MV o título `Artista - canción`) → adjunto ≤10 MB.
-- No usa lyrics / audio / visualiser como sustituto.
-- Sin videoclip: *No hay videoclip disponible para este track.*
+- Flujo: videoclip ≈ duración de la canción (Spotify completo → YouTube MV / `Artista - canción`) → adjunto ≤10 MB.
+- Ignora previews cortos de Spotify (~30 s) y lyrics / audio / visualiser.
+- Sin videoclip válido: *No hay videoclip disponible para este track.*
 
 ## Ejemplo
 
