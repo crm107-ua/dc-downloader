@@ -12,8 +12,13 @@ const REDDIT_HEADERS = {
   'User-Agent': BROWSER_UA,
 };
 
-/** Public post index. Reddit's own /.json currently returns an anti-bot HTML page. */
-const PUBLIC_POST_API = 'https://arctic-shift.photon-reddit.com/api/posts/ids?ids=';
+/** Public post indexes — Reddit's www /.json often returns anti-bot HTML from datacenters. */
+const PUBLIC_POST_APIS = [
+  (id) => `https://arctic-shift.photon-reddit.com/api/posts/ids?ids=${encodeURIComponent(id)}`,
+  (id) => `https://arctic-shift.photon-reddit.com/api/posts/ids?ids=${encodeURIComponent(`t3_${id}`)}`,
+  (id) => `https://api.reddit.com/comments/${encodeURIComponent(id)}?raw_json=1`,
+  (id) => `https://api.pullpush.io/reddit/search/submission/?ids=${encodeURIComponent(id)}`,
+];
 
 function guessMediaKind(directUrl) {
   if (/\.(gif|jpe?g|png|webp)$/i.test(directUrl)) return 'image';
@@ -176,18 +181,63 @@ async function resolvePostId(pageUrl) {
   return null;
 }
 
-async function fetchPublicSubmission(postId) {
-  const res = await fetch(`${PUBLIC_POST_API}${encodeURIComponent(postId)}`, {
-    headers: { 'User-Agent': 'dc-downloader', Accept: 'application/json' },
-    signal: AbortSignal.timeout(20000),
-  });
-  if (!res.ok) {
-    throw new Error(`índice público de Reddit HTTP ${res.status}`);
+function extractPostFromPayload(payload) {
+  if (!payload) return null;
+  // arctic-shift / pullpush: { data: [ post, ... ] }
+  if (Array.isArray(payload.data) && payload.data[0] && payload.data[0].id) {
+    return payload.data[0];
   }
-  const payload = await res.json();
-  const post = payload && Array.isArray(payload.data) ? payload.data[0] : null;
-  if (!post || !post.id) return null;
-  return post;
+  // api.reddit.com comments listing: [ { data: { children: [ { data: post } ] } }, ... ]
+  if (Array.isArray(payload)) {
+    const listing = payload[0];
+    const child =
+      listing &&
+      listing.data &&
+      Array.isArray(listing.data.children) &&
+      listing.data.children[0];
+    if (child && child.data && child.data.id) return child.data;
+  }
+  // pullpush alternate: { data: { children: [...] } } (rare)
+  if (
+    payload.data &&
+    Array.isArray(payload.data.children) &&
+    payload.data.children[0] &&
+    payload.data.children[0].data
+  ) {
+    return payload.data.children[0].data;
+  }
+  return null;
+}
+
+async function fetchPublicSubmission(postId) {
+  const cleanId = String(postId || '').replace(/^t3_/i, '');
+  if (!cleanId) return null;
+
+  let lastErr = null;
+  for (const build of PUBLIC_POST_APIS) {
+    const url = build(cleanId);
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Discordbot/2.0',
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!res.ok) {
+        lastErr = new Error(`índice público HTTP ${res.status}`);
+        continue;
+      }
+      const payload = await res.json();
+      const post = extractPostFromPayload(payload);
+      if (post && post.id) return post;
+      lastErr = new Error('índice público sin post');
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (lastErr) throw lastErr;
+  return null;
 }
 
 async function readDashDuration(dashUrl) {
@@ -203,7 +253,7 @@ async function readDashDuration(dashUrl) {
   }
 }
 
-async function describePublicPost(post) {
+function videoCandidatesFromPost(post) {
   const title = (post && post.title) || 'reddit';
   const pageUrls = [post && post.url_overridden_by_dest, post && post.url].filter(Boolean);
   const video = redditVideoOf(post);
@@ -213,25 +263,53 @@ async function describePublicPost(post) {
     video && video.hls_url,
     ...pageUrls,
   ]);
+  const listed = Number(video && video.duration);
+  const durationSeconds = Number.isFinite(listed) && listed > 0 ? listed : null;
+  const base = {
+    title,
+    id: post.id,
+    durationSeconds,
+    mediaKind: 'video',
+    fileExt: '.mp4',
+    requestHeaders: { ...REDDIT_HEADERS },
+  };
 
+  const out = [];
+  const push = (directUrl) => {
+    const u = htmlDecodeUrl(directUrl);
+    if (!u || !/^https?:\/\//i.test(u)) return;
+    if (out.some((c) => c.directUrl === u)) return;
+    out.push({ ...base, directUrl: u });
+  };
+
+  // Prefer progressive CMAF/fallback MP4 (often survives when DASH webpage fetch 403s).
+  if (video && video.fallback_url) push(video.fallback_url);
   if (videoId) {
-    const directUrl = `https://v.redd.it/${videoId}/DASHPlaylist.mpd`;
-    const listed = Number(video && video.duration);
-    const durationSeconds =
-      Number.isFinite(listed) && listed > 0 ? listed : await readDashDuration(directUrl);
-    return {
-      directUrl,
-      title,
-      id: post.id,
-      durationSeconds,
-      mediaKind: 'video',
-      fileExt: '.mp4',
-      requestHeaders: { ...REDDIT_HEADERS },
-    };
+    push(`https://v.redd.it/${videoId}/CMAF_480.mp4?source=fallback`);
+    push(`https://v.redd.it/${videoId}/DASHPlaylist.mpd`);
+  }
+  if (video && video.dash_url) push(video.dash_url);
+  if (video && video.hls_url) push(video.hls_url);
+
+  return out;
+}
+
+async function describePublicPost(post, skipUrls = null) {
+  const skip = skipUrls instanceof Set ? skipUrls : new Set();
+  const videoRows = videoCandidatesFromPost(post);
+  for (const row of videoRows) {
+    if (skip.has(row.directUrl)) continue;
+    if (row.durationSeconds == null && /\.mpd(?:\?|$)/i.test(row.directUrl)) {
+      row.durationSeconds = await readDashDuration(row.directUrl);
+    }
+    return row;
   }
 
+  const title = (post && post.title) || 'reddit';
+  const pageUrls = [post && post.url_overridden_by_dest, post && post.url].filter(Boolean);
+
   const hosted = pageUrls.map(directHostedFile).find(Boolean);
-  if (hosted) {
+  if (hosted && !skip.has(hosted)) {
     return {
       directUrl: hosted,
       title,
@@ -244,7 +322,7 @@ async function describePublicPost(post) {
   }
 
   const gallery = galleryAsset(post);
-  if (gallery && gallery.directUrl) {
+  if (gallery && gallery.directUrl && !skip.has(gallery.directUrl)) {
     return {
       directUrl: gallery.directUrl,
       title,
@@ -254,6 +332,10 @@ async function describePublicPost(post) {
       fileExt: pickExt(gallery.directUrl, gallery.mediaKind),
       requestHeaders: { ...REDDIT_HEADERS },
     };
+  }
+
+  if (videoRows.length && videoRows.every((r) => skip.has(r.directUrl))) {
+    return null;
   }
 
   const primary = htmlDecodeUrl(pageUrls[0] || '');
@@ -340,17 +422,20 @@ const provider = {
    * @param {{ run?: Function }} [ctx]
    */
   async fetchFallbackMedia(pageUrl, ctx = {}) {
+    const skipUrls = ctx.skipUrls instanceof Set ? ctx.skipUrls : new Set();
+
     try {
       const postId = await resolvePostId(pageUrl);
       if (postId) {
         const post = await fetchPublicSubmission(postId);
-        if (post) return await describePublicPost(post);
+        if (post) {
+          const described = await describePublicPost(post, skipUrls);
+          if (described) return described;
+        }
       }
     } catch (err) {
       const message = err && err.message ? err.message : String(err);
-      if (
-        /no tiene vídeo ni imagen|solo enlaza a otra web/i.test(message)
-      ) {
+      if (/no tiene vídeo ni imagen|solo enlaza a otra web/i.test(message)) {
         throw err;
       }
       console.warn(`[reddit] índice público no disponible: ${message}`);
@@ -358,9 +443,7 @@ const provider = {
 
     const run = ctx.run;
     if (typeof run !== 'function') {
-      throw new Error(
-        'Reddit bloqueó la API del post y no se pudo recuperar el media.'
-      );
+      throw new Error('Reddit bloqueó la API del post y no se pudo recuperar el media.');
     }
 
     let combined = '';
@@ -372,17 +455,13 @@ const provider = {
       );
       combined = `${stdout}\n${stderr}`;
     } catch (err) {
-      combined = [
-        err && err.message ? err.message : err,
-        err && err.stdout,
-        err && err.stderr,
-      ]
+      combined = [err && err.message ? err.message : err, err && err.stdout, err && err.stderr]
         .filter(Boolean)
         .join('\n');
     }
 
     const directUrl = extractMediaFromYtDlpOutput(combined);
-    if (!directUrl) {
+    if (!directUrl || skipUrls.has(directUrl)) {
       throw new Error(
         'Reddit bloqueó la descarga del media (403). No se pudo recuperar la URL directa.'
       );

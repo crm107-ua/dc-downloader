@@ -151,7 +151,7 @@ InteractionCreate (/video)
 | Facebook reel / fb.watch | `providers/facebook.js` + registry | Meter lógica FB en downloader |
 | Spotify track → videoclip | `providers/spotify.js` `resolveSource`: nunca `smart-preview-clips` (~30 s); duración ≈ track (≥55%); MV o `Artista - Título` (rechaza lyrics/audio/visualiser); adjunto ≤10 MB | Álbumes/playlists; aceptar previews cortos de Spotify |
 | `/video descripcion` | `commands/video.js` + caption (`cleanPostCaption` / `provider.resolveCaption`; X: fxtwitter) | Truncar con `…` ni aplastar saltos de línea |
-| Reddit JSON anti-bot / share `/s/` (yt-dlp: "authentication is required") | `providers/reddit.js` `fetchFallbackMedia`: índice público + DASH `v.redd.it` (vídeo+audio) | Pedir cookies de cuenta Reddit al usuario |
+| Reddit JSON anti-bot / share `/s/` (yt-dlp: "authentication is required") | `providers/reddit.js` `fetchFallbackMedia`: resuelve `/s/` → post id; índices arctic-shift + `api.reddit.com` (Discordbot) + pullpush; CMAF/DASH `v.redd.it` | Pedir cookies de cuenta Reddit al usuario |
 | Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |
 
 ---
