@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/dc-mark.png" alt="DC Downloader" width="148" />
+  <img src="assets/dc-mark-v2.png" alt="DC Downloader" width="148" />
 </p>
 
 <h1 align="center">DC Downloader</h1>
