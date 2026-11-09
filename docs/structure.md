@@ -7,6 +7,8 @@ dc-downloader/
 ├── CLAUDE.md                 # Entrada Claude Code → AGENTS + docs
 ├── USO.md                    # Uso rápido en Discord
 ├── README.md                 # Hub (índice a docs/)
+├── assets/
+│   └── logo.jpg              # Marca del repo
 ├── ecosystem.config.js       # PM2
 ├── package.json
 ├── docs/
