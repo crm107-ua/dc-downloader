@@ -282,27 +282,38 @@ function videoCandidatesFromPost(post) {
     out.push({ ...base, directUrl: u });
   };
 
-  // Prefer progressive CMAF/fallback MP4 (often survives when DASH webpage fetch 403s).
-  if (video && video.fallback_url) push(video.fallback_url);
-  if (videoId) {
-    push(`https://v.redd.it/${videoId}/CMAF_480.mp4?source=fallback`);
-    push(`https://v.redd.it/${videoId}/DASHPlaylist.mpd`);
-  }
+  // Prefer DASH/HLS (video+audio). CMAF/fallback progressive is often video-only → mute in Discord.
   if (video && video.dash_url) push(video.dash_url);
+  if (videoId) push(`https://v.redd.it/${videoId}/DASHPlaylist.mpd`);
   if (video && video.hls_url) push(video.hls_url);
+  if (video && video.fallback_url) push(video.fallback_url);
+  if (videoId) push(`https://v.redd.it/${videoId}/CMAF_480.mp4?source=fallback`);
 
   return out;
 }
 
+function captionFromRedditPost(post) {
+  if (!post || typeof post !== 'object') return '';
+  const title = String(post.title || '').trim();
+  const selftext = String(post.selftext || '')
+    .replace(/&#x200B;/g, '')
+    .trim();
+  if (selftext && selftext !== '[removed]' && selftext !== '[deleted]') {
+    return title ? `${title}\n\n${selftext}` : selftext;
+  }
+  return title;
+}
+
 async function describePublicPost(post, skipUrls = null) {
   const skip = skipUrls instanceof Set ? skipUrls : new Set();
+  const caption = captionFromRedditPost(post);
   const videoRows = videoCandidatesFromPost(post);
   for (const row of videoRows) {
     if (skip.has(row.directUrl)) continue;
     if (row.durationSeconds == null && /\.mpd(?:\?|$)/i.test(row.directUrl)) {
       row.durationSeconds = await readDashDuration(row.directUrl);
     }
-    return row;
+    return { ...row, description: caption, caption };
   }
 
   const title = (post && post.title) || 'reddit';
@@ -318,6 +329,8 @@ async function describePublicPost(post, skipUrls = null) {
       mediaKind: guessMediaKind(hosted),
       fileExt: pickExt(hosted, guessMediaKind(hosted)),
       requestHeaders: { ...REDDIT_HEADERS },
+      description: caption,
+      caption,
     };
   }
 
@@ -331,6 +344,8 @@ async function describePublicPost(post, skipUrls = null) {
       mediaKind: gallery.mediaKind,
       fileExt: pickExt(gallery.directUrl, gallery.mediaKind),
       requestHeaders: { ...REDDIT_HEADERS },
+      description: caption,
+      caption,
     };
   }
 
@@ -421,6 +436,18 @@ const provider = {
    * @param {string} pageUrl
    * @param {{ run?: Function }} [ctx]
    */
+  async resolveCaption(pageUrl) {
+    try {
+      const postId = await resolvePostId(pageUrl);
+      if (!postId) return null;
+      const post = await fetchPublicSubmission(postId);
+      const caption = captionFromRedditPost(post);
+      return caption || null;
+    } catch {
+      return null;
+    }
+  },
+
   async fetchFallbackMedia(pageUrl, ctx = {}) {
     const skipUrls = ctx.skipUrls instanceof Set ? ctx.skipUrls : new Set();
 

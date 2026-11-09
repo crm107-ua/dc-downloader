@@ -3,7 +3,7 @@
 ## Comandos
 
 ```
-/video url:<enlace> [calidad] [descripcion]
+/video url:<enlace> [calidad] [descripcion] [spoiler]
 /help
 ```
 
@@ -19,8 +19,15 @@
 
 | Valor | Efecto |
 |-------|--------|
-| `descripcion:True` | Envía el texto del post (p. ej. el tuit) encima del vídeo |
+| `descripcion:True` | Texto completo del post (X, Reddit, Instagram…) encima del vídeo |
 | *(omitida)* / `False` | Solo el vídeo + card del usuario |
+
+## Spoiler (opcional)
+
+| Valor | Efecto |
+|-------|--------|
+| `spoiler:True` | El media se envía como spoiler de Discord (contenido delicado) |
+| *(omitida)* / `False` | Media visible al instante |
 
 ## Spotify
 

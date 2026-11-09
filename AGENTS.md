@@ -26,7 +26,7 @@ Léelo antes de cambiar código. Prioriza cambios mínimos, el contrato de provi
 
 Bot Discord (Node.js, CommonJS, discord.js v14) que:
 
-1. Recibe `/video url` (+ `calidad` / `descripcion` opcionales).
+1. Recibe `/video url` (+ `calidad` / `descripcion` / `spoiler` opcionales).
 2. Resuelve el proveedor por hostname (Spotify puede `resolveSource` → YouTube).
 3. Encola el job (un solo encode/descarga a la vez).
 4. Comprueba duración **antes** de descargar.
@@ -124,7 +124,8 @@ InteractionCreate (/video)
 ```
 
 **Calidad por defecto:** `auto` (todos los providers). Opciones: `rapida` | `auto` | `alta`.  
-**Descripción:** opción booleana `descripcion`; caption vía `provider.resolveCaption` o meta yt-dlp.
+**Descripción:** opción booleana `descripcion`; caption vía `provider.resolveCaption` o meta yt-dlp.  
+**Spoiler:** opción booleana `spoiler` → adjunto Discord con spoiler (R2: URL entre `||`).
 
 ---
 
@@ -151,7 +152,9 @@ InteractionCreate (/video)
 | Facebook reel / fb.watch | `providers/facebook.js` + registry | Meter lógica FB en downloader |
 | Spotify track → videoclip | `providers/spotify.js` `resolveSource`: nunca `smart-preview-clips` (~30 s); duración ≈ track (≥55%); MV o `Artista - Título` (rechaza lyrics/audio/visualiser); adjunto ≤10 MB | Álbumes/playlists; aceptar previews cortos de Spotify |
 | `/video descripcion` | `commands/video.js` + caption (`cleanPostCaption` / `provider.resolveCaption`; X: fxtwitter) | Truncar con `…` ni aplastar saltos de línea |
-| Reddit JSON anti-bot / share `/s/` (yt-dlp: "authentication is required") | `providers/reddit.js` `fetchFallbackMedia`: resuelve `/s/` → post id; índices arctic-shift + `api.reddit.com` (Discordbot) + pullpush; CMAF/DASH `v.redd.it` | Pedir cookies de cuenta Reddit al usuario |
+| Reddit JSON anti-bot / share `/s/` (yt-dlp: "authentication is required") | `providers/reddit.js` `fetchFallbackMedia`: resuelve `/s/` → post id; índices públicos; **DASH/HLS primero** (audio+vídeo; CMAF suele ir sin audio) | Pedir cookies Reddit; preferir CMAF sobre DASH |
+| Reddit / Instagram / X caption | `resolveCaption` en cada provider + `cleanPostCaption`; no envolver en `*cursiva*` (Discord corta en saltos de línea) | Truncar con `…` ni aplastar saltos |
+| `/video spoiler` | `commands/video.js` `AttachmentBuilder({ spoiler })` (R2: `\|\|url\|\|`) | — |
 | Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |
 
 ---

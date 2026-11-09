@@ -61,6 +61,119 @@ function isInstagramMediaPost(urlString) {
   return false;
 }
 
+function shortcodeFromUrl(urlString) {
+  let u;
+  try {
+    u = new URL(urlString);
+  } catch {
+    return null;
+  }
+  const parts = u.pathname.split('/').filter(Boolean);
+  for (let i = 0; i < parts.length; i += 1) {
+    if (MEDIA_PATH_MARKERS.has(parts[i].toLowerCase()) && parts[i + 1]) {
+      return parts[i + 1].replace(/[^A-Za-z0-9_-]/g, '') || null;
+    }
+  }
+  return null;
+}
+
+function stripHtml(html) {
+  return String(html || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Full reel/post caption (yt-dlp title is often just "Video by user").
+ */
+async function resolveCaption(pageUrl, meta) {
+  const fromMeta = meta && (meta.description || meta.caption);
+  if (fromMeta && String(fromMeta).trim().length > 8) {
+    // Skip useless "Video by user" style when description is missing elsewhere.
+    const t = String(fromMeta).trim();
+    if (!/^Video by /i.test(t)) return t;
+  }
+
+  const shortcode = shortcodeFromUrl(pageUrl);
+  if (!shortcode) return null;
+
+  // 1) yt-dlp description (most reliable on the VPS).
+  try {
+    const { YT_DLP_BIN } = require('../utils/bins');
+    const { spawnSync } = require('child_process');
+    const r = spawnSync(
+      YT_DLP_BIN,
+      [
+        '--skip-download',
+        '--no-warnings',
+        '--extractor-args',
+        'instagram:include_dash=0',
+        '--print',
+        '%(description)s',
+        pageUrl,
+      ],
+      { encoding: 'utf8', timeout: 90000 }
+    );
+    const desc = String(r.stdout || '').trim();
+    if (r.status === 0 && desc && desc !== 'NA' && desc.length > 8 && !/^Video by /i.test(desc)) {
+      return desc;
+    }
+  } catch {
+    // fall through
+  }
+
+  // 2) Embed captioned page.
+  const embedPaths = [
+    `https://www.instagram.com/p/${shortcode}/embed/captioned/`,
+    `https://www.instagram.com/reel/${shortcode}/embed/captioned/`,
+    `https://www.instagram.com/reels/${shortcode}/embed/captioned/`,
+  ];
+
+  for (const embedUrl of embedPaths) {
+    try {
+      const res = await fetch(embedUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          Accept: 'text/html',
+          'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const captionBlock =
+        /class="Caption"[^>]*>([\s\S]*?)<div class="CaptionComments"/i.exec(html) ||
+        /class="Caption"[^>]*>([\s\S]*?)<\/div>/i.exec(html);
+      if (captionBlock && captionBlock[1]) {
+        let text = stripHtml(captionBlock[1]);
+        text = text.replace(/^@?[A-Za-z0-9._]+\s+/u, '').trim();
+        text = text.replace(/\s*View all \d+ comments.*$/i, '').trim();
+        if (text.length > 8) return text;
+      }
+      const og =
+        /property="og:description"\s+content="([^"]*)"/i.exec(html) ||
+        /content="([^"]*)"\s+property="og:description"/i.exec(html);
+      if (og && og[1]) {
+        const decoded = stripHtml(og[1].replace(/&quot;/g, '"'));
+        if (decoded.length > 8) return decoded;
+      }
+    } catch {
+      // try next embed path
+    }
+  }
+  return null;
+}
+
 function decodeJwtPayload(token) {
   const parts = String(token || '').split('.');
   if (parts.length < 2) return null;
@@ -274,6 +387,8 @@ const provider = {
       items,
     };
   },
+  resolveCaption,
+
   /**
    * When yt-dlp cannot access a post (Restricted Video / login wall / age gate),
    * resolve a progressive H.264 URL without server cookies.
@@ -303,11 +418,14 @@ const provider = {
         const directUrl = pickProgressiveUrl(meta);
         if (directUrl) {
           const duration = Number(meta.duration);
+          const description = String(meta.description || '').trim() || null;
           return {
             directUrl,
             title: meta.title || meta.id || 'instagram',
             id: meta.id ? String(meta.id) : undefined,
             durationSeconds: Number.isFinite(duration) ? duration : null,
+            description,
+            caption: description,
             requestHeaders: {
               Referer: 'https://www.instagram.com/',
               'User-Agent':
@@ -359,9 +477,11 @@ const provider = {
 module.exports = provider;
 module.exports.matchesHost = (host) => matchesHost(provider, host);
 module.exports.isInstagramMediaPost = isInstagramMediaPost;
+module.exports.resolveCaption = resolveCaption;
 module.exports._test = {
   extractDownloadgramCandidates,
   pickProgressiveUrl,
   unescapeJsString,
   isInstagramMediaPost,
+  shortcodeFromUrl,
 };

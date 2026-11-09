@@ -44,6 +44,12 @@ const data = new SlashCommandBuilder()
       .setName('descripcion')
       .setDescription('Incluye el texto del post (p. ej. el tuit) encima del vídeo')
       .setRequired(false)
+  )
+  .addBooleanOption((option) =>
+    option
+      .setName('spoiler')
+      .setDescription('Envía el media como spoiler de Discord (contenido delicado)')
+      .setRequired(false)
   );
 
 /**
@@ -135,6 +141,7 @@ async function execute(interaction) {
   const rawUrl = interaction.options.getString('url', true);
   const calidadOpt = interaction.options.getString('calidad');
   const includeDescription = Boolean(interaction.options.getBoolean('descripcion'));
+  const asSpoiler = Boolean(interaction.options.getBoolean('spoiler'));
 
   let url;
   try {
@@ -240,24 +247,31 @@ async function execute(interaction) {
       });
 
     if (includeDescription && result.caption) {
-      // Keep real newlines so Discord wraps to the next line (no mid-text "...").
-      const safe = String(result.caption).replace(/\*/g, '∗');
-      requesterEmbed.setDescription(`*${safe}*`);
+      // Plain text (no wrapping *italics*): Discord cuts italic at newlines / "*".
+      const safe = String(result.caption)
+        .replace(/\\/g, '\\\\')
+        .replace(/`/g, "'");
+      requesterEmbed.setDescription(safe.slice(0, 4096));
     }
 
     // Card first (username · 🔗 ± caption), then media.
     await interaction.channel.send({ embeds: [requesterEmbed] });
 
     if (result.delivery === 'r2' && result.publicUrl) {
-      // Bare MP4 URL → Discord unfurls the inline player. Do not edit/spoiler after.
-      await interaction.channel.send({ content: result.publicUrl });
+      // Bare MP4 URL → Discord unfurls the inline player.
+      // Spoiler-tag the URL when requested (attachment spoiler only works for files).
+      const content = asSpoiler ? `||${result.publicUrl}||` : result.publicUrl;
+      await interaction.channel.send({ content });
     } else {
       const isImage = result.mediaType === 'image';
       const ext = isImage
         ? path.extname(result.filePath) || '.jpg'
         : '.mp4';
       const safeName = `${result.platform}-${Date.now()}${ext}`;
-      const attachment = new AttachmentBuilder(result.filePath, { name: safeName });
+      const attachment = new AttachmentBuilder(result.filePath, {
+        name: safeName,
+        spoiler: asSpoiler,
+      });
       await interaction.channel.send({ files: [attachment] });
     }
   } catch (err) {

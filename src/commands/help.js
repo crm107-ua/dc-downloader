@@ -28,7 +28,7 @@ async function execute(interaction) {
         value: [
           '1. Escribe `/video`',
           '2. En **url** pega el enlace (YouTube, TikTok, Instagram, Spotify track, etc.)',
-          '3. Opcional: **calidad** (`auto` suele ir bien) y **descripcion** (texto del post)',
+          '3. Opcional: **calidad**, **descripcion** (texto del post) y **spoiler** (contenido delicado)',
           '4. Espera: verás una barra de progreso y, al terminar, el vídeo en el chat',
           '',
           'Si el post de Instagram es un carrusel (varias fotos/vídeos), el bot te preguntará cuál quieres.',
@@ -59,7 +59,12 @@ async function execute(interaction) {
       {
         name: 'Descripción (opcional)',
         value:
-          'Activa **descripcion** para enviar también el texto del post (p. ej. el tuit) encima del vídeo, junto al nombre de quien usó `/video`.',
+          'Activa **descripcion** para enviar el texto completo del post (X, Reddit, Instagram…) encima del vídeo.',
+      },
+      {
+        name: 'Spoiler (opcional)',
+        value:
+          'Activa **spoiler** para que Discord oculte el media hasta que alguien pulse (contenido delicado).',
       },
       {
         name: 'Cuánto puede durar y cómo llega',

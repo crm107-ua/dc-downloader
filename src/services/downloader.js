@@ -661,6 +661,8 @@ async function runYtdlpVideoPipeline({
       title: got.fb.title || meta.title,
       id: got.fb.id || meta.id || jobId,
       duration: got.fb.durationSeconds,
+      description: got.fb.description || got.fb.caption || meta.description || '',
+      caption: got.fb.caption || got.fb.description || meta.caption || '',
     };
     preDuration = got.fb.durationSeconds;
     fallbackAnalysis = { hadWatermarkOnly: Boolean(got.fb.hadWatermarkOnly) };
@@ -718,6 +720,8 @@ async function runYtdlpVideoPipeline({
               title: got.fb.title || meta.title,
               id: got.fb.id || meta.id || jobId,
               duration: got.fb.durationSeconds,
+              description: got.fb.description || got.fb.caption || '',
+              caption: got.fb.caption || got.fb.description || '',
             };
             fallbackAnalysis = { hadWatermarkOnly: Boolean(got.fb.hadWatermarkOnly) };
           } else {
@@ -746,6 +750,8 @@ async function runYtdlpVideoPipeline({
           title: got.fb.title || meta.title,
           id: got.fb.id || meta.id || jobId,
           duration: got.fb.durationSeconds,
+          description: got.fb.description || got.fb.caption || '',
+          caption: got.fb.caption || got.fb.description || '',
         };
         fallbackAnalysis = { hadWatermarkOnly: Boolean(got.fb.hadWatermarkOnly) };
       } else {
@@ -810,15 +816,26 @@ async function resolvePostCaption(provider, url, meta, includeDescription) {
   if (!includeDescription) return '';
   if (provider && provider.id === 'spotify') return '';
 
+  // Fallback downloads often stash the post text on meta.caption / meta.description.
+  const fromMetaField = cleanPostCaption(
+    (meta && (meta.caption || meta.description)) || ''
+  );
+  if (fromMetaField && !looksTruncatedCaption(fromMetaField)) {
+    // Still prefer provider.resolveCaption when it returns a longer/fuller text.
+  }
+
   if (provider && typeof provider.resolveCaption === 'function') {
     try {
       const fromProvider = await provider.resolveCaption(url, meta);
       const cleaned = cleanPostCaption(fromProvider);
-      if (cleaned) return cleaned;
+      if (cleaned) {
+        if (!fromMetaField || cleaned.length >= fromMetaField.length) return cleaned;
+      }
     } catch (err) {
       console.warn(`[${provider.id}] resolveCaption: ${err.message || err}`);
     }
   }
+  if (fromMetaField) return fromMetaField;
   return captionFromMeta(meta);
 }
 

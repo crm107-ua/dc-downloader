@@ -64,7 +64,7 @@ Guía corta de uso: [`USO.md`](USO.md).
 
 | Comando | Descripción |
 |---------|-------------|
-| `/video url:<enlace> [calidad] [descripcion]` | Descarga, comprime y envía el video |
+| `/video url:<enlace> [calidad] [descripcion] [spoiler]` | Descarga, comprime y envía el video |
 | `/help` | Ayuda (mensaje ephemeral) |
 
 ### Opción `calidad`
@@ -81,8 +81,15 @@ Aplica a **todos** los proveedores.
 
 | Valor | Comportamiento |
 |-------|----------------|
-| `True` | Incluye el texto del post (p. ej. el tuit) en la card, encima del vídeo |
+| `True` | Texto completo del post (X / Reddit / Instagram, etc.) en la card, encima del media |
 | `False` / omitida | Solo card del usuario + media |
+
+### Opción `spoiler`
+
+| Valor | Comportamiento |
+|-------|----------------|
+| `True` | Adjunta el media como spoiler de Discord (contenido delicado) |
+| `False` / omitida | Media sin spoiler |
 
 ### Spotify
 
