@@ -154,7 +154,7 @@ InteractionCreate (/video)
 | `/video descripcion` | `commands/video.js` + caption (`cleanPostCaption` / `provider.resolveCaption`; X: fxtwitter) | Truncar con `…` ni aplastar saltos de línea |
 | Reddit JSON anti-bot / share `/s/` (yt-dlp: "authentication is required") | `providers/reddit.js` `fetchFallbackMedia`: resuelve `/s/` → post id; índices públicos; **DASH/HLS primero** (audio+vídeo; CMAF suele ir sin audio) | Pedir cookies Reddit; preferir CMAF sobre DASH |
 | Reddit / Instagram / X caption | `resolveCaption` en cada provider + `cleanPostCaption`; no envolver en `*cursiva*` (Discord corta en saltos de línea) | Truncar con `…` ni aplastar saltos |
-| `/video spoiler` | `commands/video.js` `AttachmentBuilder({ spoiler })` (R2: `\|\|url\|\|`) | — |
+| `/video spoiler` | `commands/video.js` `attachment.setSpoiler(true)` → nombre `SPOILER_…` (R2: `\|\|url\|\|`) | Pasar `{ spoiler: true }` al ctor (discord.js lo ignora) |
 | Reddit GIF/imagen 403 en i.redd.it | `providers/reddit.js` `fetchFallbackMedia` (CDN directo) | Pedir cookies de cuenta Reddit al usuario |
 
 ---

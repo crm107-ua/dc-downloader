@@ -268,10 +268,10 @@ async function execute(interaction) {
         ? path.extname(result.filePath) || '.jpg'
         : '.mp4';
       const safeName = `${result.platform}-${Date.now()}${ext}`;
-      const attachment = new AttachmentBuilder(result.filePath, {
-        name: safeName,
-        spoiler: asSpoiler,
-      });
+      // discord.js ignores `{ spoiler: true }` in the ctor — must call setSpoiler()
+      // so the file is named SPOILER_… (Discord's actual spoiler mark).
+      const attachment = new AttachmentBuilder(result.filePath, { name: safeName });
+      if (asSpoiler) attachment.setSpoiler(true);
       await interaction.channel.send({ files: [attachment] });
     }
   } catch (err) {
