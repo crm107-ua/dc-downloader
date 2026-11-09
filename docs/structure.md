@@ -8,7 +8,7 @@ dc-downloader/
 ├── USO.md                    # Uso rápido en Discord
 ├── README.md                 # Hub (índice a docs/)
 ├── assets/
-│   └── dc-logo.jpg              # Marca del repo
+│   └── dc-mark.png · dc-logo.svg  # Marca del repo
 ├── ecosystem.config.js       # PM2
 ├── package.json
 ├── docs/
