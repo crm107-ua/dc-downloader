@@ -35,7 +35,7 @@ Helpers de resolución: `resolveProviderByUrl`, `resolveProviderByHost`, `suppor
 | **Reddit** | `reddit.com`, `old.reddit.com`, `redd.it` (posts y `/s/`) | Preferir **DASH/HLS** (vídeo+audio); CMAF suele ser **solo vídeo** | `fetchFallbackMedia` si JSON anti-bot / 403 `i.redd.it`; no pedir cookies al usuario |
 | **YouTube** | `youtube.com`, `youtu.be`, `youtube-nocookie.com` | `YOUTUBE_FORMAT` AVC+M4A | Age-gate / bot-check → `fetchFallbackMedia`; `-N 1` en auth-wall |
 | **TikTok** | `tiktok.com`, `vm.`, `vt.` | Prefer `play_addr` / h264; evita watermark `download` | `--impersonate chrome`; fallback CDN sin cookies |
-| **Instagram** | `instagram.com`, `instagr.am` | Progressive `3/2/1` H.264 (no DASH VP9) | Carruseles → Select Menu; restringidos → fallback |
+| **Instagram** | `instagram.com`, `instagr.am` | Progressive `3/2/1` H.264 (no DASH VP9) | Carruseles → Select Menu; rate-limit / Restricted / login → soft-fail carrusel + `fetchFallbackMedia` (downloadgram/instasave, reintentos) |
 | **Facebook** | `facebook.com`, `fb.watch` | `hd/sd` progressive | `normalizeUrl` unifica reel/watch |
 | **Spotify** | `open.spotify.com/track/…` | Videoclip ≈ duración del track | Rechaza previews ~30 s, lyrics/audio/visualiser; siempre adjunto ≤10 MB |
 
@@ -60,6 +60,7 @@ No hace falta tocar downloader, compressor ni Discord.
 | YouTube bot-check | `youtube.js` + downloader serie | Pedir `COOKIES_FILE` al usuario de Discord |
 | Spotify preview corto | `spotify.js` `resolveSource` duración ≥55% track | Aceptar `smart-preview-clips` ~30 s |
 | IG freeze (audio sí) | Format progressive + no `-c copy` VP9 | Mezclar DASH VP9 con stream copy |
+| IG rate-limit / Restricted | `listMediaChoices` soft-fail + `fetchFallbackMedia` multi-API | Abortar `/video` en “No se pudo preparar el carrusel” |
 | Caption con `*cursiva*` | `cleanPostCaption` / `resolveCaption` | Envolver todo en itálicas (Discord corta en `\n`) |
 | Spoiler | `attachment.setSpoiler(true)` | `{ spoiler: true }` en el constructor (discord.js lo ignora) |
 

@@ -145,7 +145,7 @@ Detalle: [`docs/architecture.md`](docs/architecture.md) · UX: [`docs/commands.m
 | Spotify → MV YouTube bot-check | `spotify.js` (Piped/Invidious) + format/fallback de YouTube | Pedir cookies YouTube |
 | Instagram carrusel | `instagram.js` `listMediaChoices` + UI en `video.js` | Forzar siempre el primer ítem |
 | Instagram freeze / VP9 | format `3/2/1` + compressor sin `-c copy` de no-H.264 | Mezclar DASH VP9 con stream copy |
-| Instagram restringido | `instagram.js` `fetchFallbackMedia` | Cookies obligatorias en Discord |
+| Instagram restringido / rate-limit | `listMediaChoices` soft-fail (no abortar `/video`) + `fetchFallbackMedia` multi-API | Abortar en “No se pudo preparar el carrusel”; cookies obligatorias |
 | IG/FB viewport minúsculo | compressor: caja cuadrada + `setsar=1` | Cajas 16:9 que aplastan verticales |
 | Vídeos >5 min | `r2Storage.js` (upload HQ si ya H.264) | Comprimir a 10 MB |
 | R2 almacenamiento | FIFO `enforceStorageBudget` (~9 GB) | Borrar por edad como temp |

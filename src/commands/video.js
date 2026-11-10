@@ -177,13 +177,11 @@ async function execute(interaction) {
         carouselPick = pick;
       }
     } catch (err) {
-      const message = formatDownloadError(err && err.message ? err.message : err);
-      await interaction.editReply({
-        content: `No se pudo preparar el carrusel:\n${message}`,
-        embeds: [],
-        components: [],
-      });
-      return;
+      // Never abort /video here: Restricted / rate-limit / login walls are recovered
+      // later via provider.fetchFallbackMedia in the download pipeline.
+      console.warn(
+        `[video] carousel probe failed, continuing as single media: ${err && err.message ? err.message : err}`
+      );
     }
   }
 

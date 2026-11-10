@@ -234,6 +234,79 @@ function pickProgressiveUrl(meta) {
   return nonDash ? nonDash.url : null;
 }
 
+/** Rate-limit / login / restricted walls from yt-dlp or public resolvers. */
+function isInstagramAccessWallError(err) {
+  return /rate-?limit|login page|login_required|Restricted Video|isn't available to everyone|can't be seen by certain audiences|authentication is required|Log into an account|HTTP 429|resoluci[oó]n alternativa de Instagram fall[oó]/i.test(
+    String((err && err.message) || err || '')
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Public downloadgram-compatible APIs (same HTML/JWT shape).
+ * Multiple hosts so one 429 does not brick Instagram forever.
+ */
+const INSTAGRAM_RESOLVER_ENDPOINTS = [
+  'https://api.downloadgram.org/media',
+  'https://api.instasave.website/media',
+];
+
+async function resolveViaPublicApis(pageUrl) {
+  let lastErr = null;
+  for (let round = 0; round < 3; round += 1) {
+    for (const endpoint of INSTAGRAM_RESOLVER_ENDPOINTS) {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: '*/*',
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            Origin: 'https://downloadgram.org',
+            Referer: 'https://downloadgram.org/',
+          },
+          body: JSON.stringify({ url: pageUrl }),
+          signal: AbortSignal.timeout(45000),
+        });
+        if (res.status === 429) {
+          lastErr = new Error(`Resolución alternativa de Instagram falló (HTTP 429).`);
+          continue;
+        }
+        if (!res.ok) {
+          lastErr = new Error(`Resolución alternativa de Instagram falló (HTTP ${res.status}).`);
+          continue;
+        }
+        const body = await res.text();
+        const candidates = extractDownloadgramCandidates(body);
+        const best =
+          candidates.find((c) => c.force || /\.mp4$/i.test(c.name)) || candidates[0];
+        if (!best || !best.url) {
+          lastErr = new Error('No se pudo resolver el vídeo de Instagram sin sesión.');
+          continue;
+        }
+        return {
+          directUrl: best.url,
+          title: 'instagram',
+          durationSeconds: null,
+          requestHeaders: {
+            Referer: 'https://downloadgram.org/',
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          },
+        };
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    await sleep(800 * (round + 1));
+  }
+  throw lastErr || new Error('No se pudo resolver el vídeo de Instagram sin sesión.');
+}
+
 const provider = {
   id: 'instagram',
   label: 'Instagram',
@@ -298,6 +371,9 @@ const provider = {
     const args = [
       '--extractor-args',
       'instagram:include_dash=0',
+      // Softens anonymous rate-limits vs bare datacenter fingerprint.
+      '--impersonate',
+      'chrome',
     ];
     const item = Number(options.playlistItem);
     if (!Number.isFinite(item) || item < 1) {
@@ -345,12 +421,30 @@ const provider = {
       '--skip-download',
       '--extractor-args',
       'instagram:include_dash=0',
+      '--impersonate',
+      'chrome',
       ...cookieArgs,
       url,
     ];
 
-    const { stdout } = await run('yt-dlp', args, { timeoutMs: 120000 });
-    const data = parseDumpJsonLoose(stdout);
+    let data;
+    try {
+      const { stdout } = await run('yt-dlp', args, { timeoutMs: 120000 });
+      data = parseDumpJsonLoose(stdout);
+    } catch (err) {
+      // Rate-limit / Restricted / login: do NOT block /video.
+      // Treat as single media so downloadAndPrepare → fetchFallbackMedia can recover.
+      console.warn(
+        `[instagram] listMediaChoices soft-fail (continue as single): ${err && err.message ? err.message : err}`
+      );
+      return {
+        isCarousel: false,
+        title: shortcodeFromUrl(url) || null,
+        items: [],
+        accessWall: isInstagramAccessWallError(err),
+      };
+    }
+
     const entries = Array.isArray(data.entries) ? data.entries : null;
 
     // Single reel/post: not a carousel
@@ -390,7 +484,7 @@ const provider = {
   resolveCaption,
 
   /**
-   * When yt-dlp cannot access a post (Restricted Video / login wall / age gate),
+   * When yt-dlp cannot access a post (Restricted Video / login wall / age gate / rate-limit),
    * resolve a progressive H.264 URL without server cookies.
    *
    * @param {string} pageUrl
@@ -410,6 +504,8 @@ const provider = {
             '--skip-download',
             '--extractor-args',
             'instagram:include_dash=0',
+            '--impersonate',
+            'chrome',
             pageUrl,
           ],
           { timeoutMs: 120000 }
@@ -429,54 +525,24 @@ const provider = {
             requestHeaders: {
               Referer: 'https://www.instagram.com/',
               'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             },
           };
         }
       } catch {
-        // fall through to public resolver
+        // fall through to public resolvers
       }
     }
 
-    // 2) Public resolver (works for many posts yt-dlp marks Restricted / login_required).
-    const res = await fetch('https://api.downloadgram.org/media', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: '*/*',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Origin: 'https://downloadgram.org',
-        Referer: 'https://downloadgram.org/',
-      },
-      body: JSON.stringify({ url: pageUrl }),
-    });
-    if (!res.ok) {
-      throw new Error(`Resolución alternativa de Instagram falló (HTTP ${res.status}).`);
-    }
-    const body = await res.text();
-    const candidates = extractDownloadgramCandidates(body);
-    const best = candidates.find((c) => c.force || /\.mp4$/i.test(c.name)) || candidates[0];
-    if (!best || !best.url) {
-      throw new Error('No se pudo resolver el vídeo de Instagram sin sesión.');
-    }
-
-    return {
-      directUrl: best.url,
-      title: 'instagram',
-      durationSeconds: null,
-      requestHeaders: {
-        Referer: 'https://downloadgram.org/',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-    };
+    // 2) Public resolvers (Restricted / login_required / anonymous rate-limit).
+    return resolveViaPublicApis(pageUrl);
   },
 };
 
 module.exports = provider;
 module.exports.matchesHost = (host) => matchesHost(provider, host);
 module.exports.isInstagramMediaPost = isInstagramMediaPost;
+module.exports.isInstagramAccessWallError = isInstagramAccessWallError;
 module.exports.resolveCaption = resolveCaption;
 module.exports._test = {
   extractDownloadgramCandidates,
@@ -484,4 +550,6 @@ module.exports._test = {
   unescapeJsString,
   isInstagramMediaPost,
   shortcodeFromUrl,
+  isInstagramAccessWallError,
+  resolveViaPublicApis,
 };

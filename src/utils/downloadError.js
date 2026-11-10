@@ -18,7 +18,10 @@ function formatDownloadError(raw) {
     return 'TikTok no permite descargar este vídeo (contenido restringido o privado).';
   }
   if (/Restricted Video|isn't available to everyone|can't be seen by certain audiences/i.test(original)) {
-    return 'Instagram no permite descargar este vídeo (contenido restringido o privado).';
+    return 'Instagram bloqueó el acceso anónimo a este post; se intentó fuente alternativa automáticamente.';
+  }
+  if (/rate-?limit|redirected to the login page|exceeded the rate-limit/i.test(original)) {
+    return 'Instagram limitó temporalmente el acceso anónimo; se intentó fuente alternativa automáticamente.';
   }
   if (/instagram:user|Unable to extract data/i.test(original)) {
     return 'Ese enlace de Instagram no es un reel, post o carrusel. Pega el enlace del vídeo o la foto concreta.';
