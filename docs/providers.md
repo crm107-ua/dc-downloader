@@ -60,7 +60,7 @@ No hace falta tocar downloader, compressor ni Discord.
 | YouTube bot-check | `youtube.js` + downloader serie | Pedir `COOKIES_FILE` al usuario de Discord |
 | Spotify preview corto | `spotify.js` `resolveSource` duración ≥55% track | Aceptar `smart-preview-clips` ~30 s |
 | IG freeze (audio sí) | Format progressive + no `-c copy` VP9 | Mezclar DASH VP9 con stream copy |
-| IG rate-limit / Restricted | `listMediaChoices` soft-fail + `fetchFallbackMedia` multi-API | Abortar `/video` en “No se pudo preparar el carrusel” |
+| IG rate-limit / Restricted | Skip carrusel en `/reel/`·`/tv/`; soft-fail en `/p/`; `fetchFallbackMedia` multi-API | Abortar `/video` en “No se pudo preparar el carrusel”; sondear carrusel en reels |
 | Caption con `*cursiva*` | `cleanPostCaption` / `resolveCaption` | Envolver todo en itálicas (Discord corta en `\n`) |
 | Spoiler | `attachment.setSpoiler(true)` | `{ spoiler: true }` en el constructor (discord.js lo ignora) |
 

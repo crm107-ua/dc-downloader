@@ -13,7 +13,10 @@ const { enqueue } = require('../services/jobQueue');
 const { createProgressReporter } = require('../utils/progress');
 const { normalizeQualityMode } = require('../services/compressor');
 const { formatDownloadError } = require('../utils/downloadError');
-const { isInstagramMediaPost } = require('../providers/instagram');
+const {
+  isInstagramMediaPost,
+  mayBeInstagramCarousel,
+} = require('../providers/instagram');
 
 const CAROUSEL_TIMEOUT_MS = 120000;
 
@@ -167,9 +170,14 @@ async function execute(interaction) {
     return;
   }
 
-  if (provider && typeof provider.listMediaChoices === 'function') {
+  if (
+    provider &&
+    provider.id === 'instagram' &&
+    typeof provider.listMediaChoices === 'function' &&
+    mayBeInstagramCarousel(url)
+  ) {
     try {
-      await interaction.editReply({ content: 'Analizando enlace de Instagram…' });
+      await interaction.editReply({ content: 'Analizando carrusel de Instagram…' });
       const choices = await listMediaChoices(url);
       if (choices && choices.isCarousel) {
         const pick = await promptCarouselChoice(interaction, choices);
@@ -216,11 +224,13 @@ async function execute(interaction) {
   } catch (err) {
     await progress.close();
     const message = formatDownloadError(err && err.message ? err.message : err);
-    await interaction.editReply({
-      content: `No se pudo descargar el media:\n${message}`,
-      embeds: [],
-      components: [],
-    });
+    console.error(`[video] download failed: ${message}`);
+    const content = `No se pudo descargar el media:\n${message}`;
+    try {
+      await interaction.editReply({ content, embeds: [], components: [] });
+    } catch {
+      await interaction.channel.send({ content }).catch(() => {});
+    }
     return;
   }
 
@@ -253,13 +263,23 @@ async function execute(interaction) {
     }
 
     // Card first (username · 🔗 ± caption), then media.
-    await interaction.channel.send({ embeds: [requesterEmbed] });
+    // Use channel.send (not interaction followUp) so delivery survives expired tokens.
+    const channel = interaction.channel;
+    if (!channel || typeof channel.send !== 'function') {
+      throw new Error('No hay canal para enviar el media.');
+    }
+
+    await channel.send({ embeds: [requesterEmbed] });
+    console.log(
+      `[video] card sent platform=${result.platform} delivery=${result.delivery || 'attachment'} bytes=${result.sizeBytes || 0}`
+    );
 
     if (result.delivery === 'r2' && result.publicUrl) {
       // Bare MP4 URL → Discord unfurls the inline player.
       // Spoiler-tag the URL when requested (attachment spoiler only works for files).
       const content = asSpoiler ? `||${result.publicUrl}||` : result.publicUrl;
-      await interaction.channel.send({ content });
+      await channel.send({ content });
+      console.log(`[video] r2 link sent ${result.publicUrl}`);
     } else {
       const isImage = result.mediaType === 'image';
       const ext = isImage
@@ -270,19 +290,22 @@ async function execute(interaction) {
       // so the file is named SPOILER_… (Discord's actual spoiler mark).
       const attachment = new AttachmentBuilder(result.filePath, { name: safeName });
       if (asSpoiler) attachment.setSpoiler(true);
-      await interaction.channel.send({ files: [attachment] });
+      await channel.send({ files: [attachment] });
+      console.log(`[video] attachment sent ${safeName} bytes=${result.sizeBytes || 0}`);
     }
   } catch (err) {
     await progress.close();
     const message = err && err.message ? err.message : 'Error al enviar el archivo.';
+    console.error(`[video] send failed: ${message}`);
     const errorText = `Descarga OK pero falló el envío:\n\`\`\`${message.slice(0, 1500)}\`\`\``;
     try {
-      await interaction.editReply({
-        content: errorText,
-        embeds: [],
-        files: [],
-        components: [],
-      });
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: errorText });
+      } else {
+        await interaction.followUp({ content: errorText }).catch(async () => {
+          await interaction.channel.send({ content: errorText });
+        });
+      }
     } catch {
       await interaction.channel.send({ content: errorText }).catch(() => {});
     }

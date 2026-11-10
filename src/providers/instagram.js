@@ -44,21 +44,36 @@ function unescapeJsString(s) {
 
 const MEDIA_PATH_MARKERS = new Set(['reel', 'reels', 'p', 'tv', 'share']);
 
-/** True for /reel/, /p/, /tv/, /share/ (or /user/reel/ID) — not profile/home URLs. */
-function isInstagramMediaPost(urlString) {
+function mediaPathKind(urlString) {
   let u;
   try {
     u = new URL(urlString);
   } catch {
-    return false;
+    return null;
   }
   const parts = u.pathname.split('/').filter(Boolean);
-  if (!parts.length) return false;
-  if (MEDIA_PATH_MARKERS.has(parts[0].toLowerCase()) && parts[1]) return true;
-  if (parts.length >= 3 && MEDIA_PATH_MARKERS.has(parts[1].toLowerCase()) && parts[2]) {
-    return true;
+  if (!parts.length) return null;
+  if (MEDIA_PATH_MARKERS.has(parts[0].toLowerCase()) && parts[1]) {
+    return parts[0].toLowerCase() === 'reels' ? 'reel' : parts[0].toLowerCase();
   }
-  return false;
+  if (parts.length >= 3 && MEDIA_PATH_MARKERS.has(parts[1].toLowerCase()) && parts[2]) {
+    return parts[1].toLowerCase() === 'reels' ? 'reel' : parts[1].toLowerCase();
+  }
+  return null;
+}
+
+/** True for /reel/, /p/, /tv/, /share/ (or /user/reel/ID) — not profile/home URLs. */
+function isInstagramMediaPost(urlString) {
+  return Boolean(mediaPathKind(urlString));
+}
+
+/**
+ * Only /p/ (and share→post) can be sidecars. /reel/ and /tv/ are always a single clip —
+ * probing them with yt-dlp only burns rate-limit and delayed Discord delivery.
+ */
+function mayBeInstagramCarousel(urlString) {
+  const kind = mediaPathKind(urlString);
+  return kind === 'p' || kind === 'share';
 }
 
 function shortcodeFromUrl(urlString) {
@@ -408,6 +423,14 @@ const provider = {
     if (!isInstagramMediaPost(url)) {
       return { isCarousel: false, title: null, items: [] };
     }
+    // Reels/TV are never multi-item — skip dump-json (avoids Restricted/rate-limit walls).
+    if (!mayBeInstagramCarousel(url)) {
+      return {
+        isCarousel: false,
+        title: shortcodeFromUrl(url) || null,
+        items: [],
+      };
+    }
     const run = ctx && ctx.run;
     if (typeof run !== 'function') {
       throw new Error('listMediaChoices requiere ctx.run');
@@ -542,6 +565,7 @@ const provider = {
 module.exports = provider;
 module.exports.matchesHost = (host) => matchesHost(provider, host);
 module.exports.isInstagramMediaPost = isInstagramMediaPost;
+module.exports.mayBeInstagramCarousel = mayBeInstagramCarousel;
 module.exports.isInstagramAccessWallError = isInstagramAccessWallError;
 module.exports.resolveCaption = resolveCaption;
 module.exports._test = {
@@ -549,6 +573,7 @@ module.exports._test = {
   pickProgressiveUrl,
   unescapeJsString,
   isInstagramMediaPost,
+  mayBeInstagramCarousel,
   shortcodeFromUrl,
   isInstagramAccessWallError,
   resolveViaPublicApis,
